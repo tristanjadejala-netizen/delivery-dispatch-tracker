@@ -13,26 +13,24 @@ import { fileURLToPath } from "url";
 
 const app = express();
 const allowedOrigins = [
-  process.env.FRONTEND_BASE_URL,
-  "https://delivery-dispatch-tracker.vercel.app"
+  "http://localhost:5173",
+  "https://delivery-dispatch-tracker.vercel.app",
+  "https://delivery-dispatch-tracker-olw6yucvn.vercel.app",
+  "https://delivery-dispatch-tracker-noif7pa7o.vercel.app"
 ];
 
-app.use(
-  cors({
-    origin: function (origin, callback) {
-      // allow requests with no origin (like Postman)
-      if (!origin) return callback(null, true);
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true); // allow Postman, server-to-server
 
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
 
-      return callback(new Error("Not allowed by CORS"));
-    },
-    credentials: true
-  })
-);
-
+    return callback(new Error("CORS not allowed"));
+  },
+  credentials: true
+}));
 app.use(express.json());
 
 const __filename = fileURLToPath(import.meta.url);
