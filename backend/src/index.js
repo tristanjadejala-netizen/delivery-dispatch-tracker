@@ -20,19 +20,27 @@ const allowedOriginPatterns = [
   /^https:\/\/delivery-dispatch-tracker-[a-z0-9-]+\.vercel\.app$/, // preview deployments
 ];
 
-const corsOptions = {
-  origin: (origin, callback) => {
-    if (!origin) return callback(null, true); // Postman / server-to-server
+import cors from "cors";
 
-    const ok = allowedOriginPatterns.some((re) => re.test(origin));
-    return ok ? callback(null, true) : callback(new Error("CORS not allowed"));
-  },
-  credentials: true,
-  optionsSuccessStatus: 204,
-};
+const allowedOrigins = [
+  "http://localhost:5173",
+  "https://delivery-dispatch-tracker.vercel.app",
+  "https://delivery-dispatch-tracker-olw6yucvn.vercel.app",
+  "https://delivery-dispatch-tracker-noif7pa70.vercel.app"
+];
 
-app.use(cors(corsOptions));
-app.options("*", cors(corsOptions)); // IMPORTANT for preflight
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true); // allow Postman / server calls
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error("CORS not allowed"));
+    },
+    credentials: true,
+  })
+);
 
 app.use(express.json());
 
