@@ -1,146 +1,117 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { useEffect, useRef } from "react";
+import { Outlet } from "react-router-dom";
+import api from "../lib/api";
 
-function tabStyle(isActive) {
-  return {
-    flex: 1,
-    minWidth: 0,
-    padding: "10px 8px",
-    borderRadius: 12,
-    textDecoration: "none",
-    display: "grid",
-    placeItems: "center",
-    gap: 4,
-    fontSize: 11,
-    fontWeight: 900,
-    color: isActive ? "#0b3b8f" : "#64748b",
-    background: isActive ? "rgba(0,112,255,0.10)" : "transparent",
-  };
-}
+import "../styles/driver-mobile.css";
 
-function Icon({ name, active }) {
-  const c = active ? "#0b3b8f" : "#64748b";
-  const common = { width: 22, height: 22, display: "block" };
-
-  if (name === "home") {
-    return (
-      <svg viewBox="0 0 24 24" style={common} fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M3 11l9-8 9 8" />
-        <path d="M5 10v10h14V10" />
-      </svg>
-    );
-  }
-
-  if (name === "assigned") {
-    return (
-      <svg viewBox="0 0 24 24" style={common} fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M4 7h16" />
-        <path d="M4 12h16" />
-        <path d="M4 17h16" />
-      </svg>
-    );
-  }
-
-  return (
-    <svg viewBox="0 0 24 24" style={common} fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-      <circle cx="12" cy="7" r="4" />
-    </svg>
-  );
-}
-
+import DriverTopBar from "../components/driver/DriverTopBar";
+import DriverBottomNav from "../components/driver/DriverBottomNav";
+import "../styles/fastpass-dashboard.css";
+import "../styles/fastpass-dispatcher-shell.css";
 export default function DriverLayout() {
-  const styles = {
-    page: {
-      minHeight: "100vh",
-      background:
-        "radial-gradient(900px 520px at 15% 12%, rgba(0, 98, 255, 0.16), transparent 60%)," +
-        "radial-gradient(900px 520px at 85% 18%, rgba(255, 126, 24, 0.12), transparent 55%)," +
-        "linear-gradient(180deg, #ffffff 0%, #f5f8ff 55%, #f7fbff 100%)",
-      fontFamily: "Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial",
-      color: "#0b1220",
-      display: "grid",
-      gridTemplateRows: "1fr auto",
-    },
-    content: {
-      padding: "18px 16px 92px",
-      // ✅ wider container so desktop doesn't look tiny
-      maxWidth: 1280,
-      width: "100%",
-      margin: "0 auto",
-    },
-    bottom: {
-      position: "fixed",
-      left: 0,
-      right: 0,
-      bottom: 0,
-      padding: "10px 12px",
-      background: "rgba(255,255,255,0.88)",
-      backdropFilter: "blur(10px)",
-      borderTop: "1px solid rgba(15,23,42,0.08)",
-      display: "grid",
-      placeItems: "center",
-      zIndex: 50,
-    },
-    nav: {
-      // ✅ nav stays centered and a bit wider
-      maxWidth: 900,
-      width: "100%",
-      display: "flex",
-      gap: 8,
-      padding: 6,
-      borderRadius: 16,
-      border: "1px solid rgba(15,23,42,0.08)",
-      boxShadow: "0 14px 30px rgba(11,18,32,0.10)",
-      background: "rgba(255,255,255,0.92)",
-    },
-  };
+  // =========================================================
+  // Live Driver Location Tracking (while logged in as DRIVER)
+  // - Posts GPS to backend: POST /driver/location
+  // - Throttled to reduce battery/network usage
+  // =========================================================
+  const watchIdRef = useRef(null);
+  const lastSentRef = useRef({ t: 0, lat: null, lng: null });
+  const inFlightRef = useRef(false);
+
+  useEffect(() => {
+    const role = localStorage.getItem("role");
+    if (role !== "DRIVER") return;
+
+    if (!("geolocation" in navigator)) return;
+
+    // prevent duplicate watch if hot-reload/mount edge cases
+    if (watchIdRef.current != null) return;
+
+    const MIN_SEND_MS = 5000; // send at most every 5s
+    const MIN_MOVE_M = 12; // or moved ~12m
+
+    const haversineM = (aLat, aLng, bLat, bLng) => {
+      const R = 6371000;
+      const toRad = (v) => (v * Math.PI) / 180;
+      const dLat = toRad(bLat - aLat);
+      const dLng = toRad(bLng - aLng);
+      const s1 = Math.sin(dLat / 2);
+      const s2 = Math.sin(dLng / 2);
+      const aa =
+        s1 * s1 +
+        Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * s2 * s2;
+      const c = 2 * Math.atan2(Math.sqrt(aa), Math.sqrt(1 - aa));
+      return R * c;
+    };
+
+    const maybeSend = async (pos) => {
+      const now = Date.now();
+      const { latitude, longitude, accuracy, heading, speed } = pos.coords;
+
+      const last = lastSentRef.current;
+      const timeOk = now - (last.t || 0) >= MIN_SEND_MS;
+
+      let moveOk = true;
+      if (typeof last.lat === "number" && typeof last.lng === "number") {
+        const moved = haversineM(last.lat, last.lng, latitude, longitude);
+        moveOk = moved >= MIN_MOVE_M;
+      }
+
+      // throttle by time AND movement
+      if (!timeOk && !moveOk) return;
+      if (inFlightRef.current) return;
+
+      inFlightRef.current = true;
+      try {
+        await api.post("/driver/location", {
+          lat: latitude,
+          lng: longitude,
+          accuracy: typeof accuracy === "number" ? accuracy : null,
+          heading: typeof heading === "number" ? heading : null,
+          speed: typeof speed === "number" ? speed : null,
+        });
+        lastSentRef.current = { t: now, lat: latitude, lng: longitude };
+      } catch {
+        // silent (keep UI clean)
+      } finally {
+        inFlightRef.current = false;
+      }
+    };
+
+    const onError = () => {
+      // silent: permission denied / unavailable
+    };
+
+    watchIdRef.current = navigator.geolocation.watchPosition(maybeSend, onError, {
+      enableHighAccuracy: true,
+      maximumAge: 0,
+      timeout: 15000,
+    });
+
+    return () => {
+      if (watchIdRef.current != null) {
+        try {
+          navigator.geolocation.clearWatch(watchIdRef.current);
+        } catch {
+          // ignore
+        }
+      }
+      watchIdRef.current = null;
+      inFlightRef.current = false;
+    };
+  }, []);
 
   return (
-    <div style={styles.page}>
-      <main style={styles.content}>
-        <Outlet />
-      </main>
-
-      <div style={styles.bottom}>
-        <nav style={styles.nav}>
-          <NavLink to="/driver/home" style={({ isActive }) => tabStyle(isActive)} aria-label="Home">
-            {({ isActive }) => (
-              <>
-                <Icon name="home" active={isActive} />
-                <span>Home</span>
-              </>
-            )}
-          </NavLink>
-
-          <NavLink to="/driver/assigned" style={({ isActive }) => tabStyle(isActive)} aria-label="Deliveries">
-            {({ isActive }) => (
-              <>
-                <Icon name="assigned" active={isActive} />
-                <span>Deliveries</span>
-              </>
-            )}
-          </NavLink>
-
-          <NavLink to="/driver/profile" style={({ isActive }) => tabStyle(isActive)} aria-label="Profile">
-            {({ isActive }) => (
-              <>
-                <Icon name="profile" active={isActive} />
-                <span>Profile</span>
-              </>
-            )}
-          </NavLink>
-        </nav>
+    <div className="drvApp">
+      <div className="drvFrame">
+        <DriverTopBar />
+        <main className="drvContent">
+          <Outlet />
+        </main>
+        <div style={{ height: 0 }} />
       </div>
 
-      {/* ✅ desktop padding boost without changing other pages */}
-      <style>{`
-        @media (min-width: 1024px){
-          main{ padding: 28px 26px 110px !important; }
-        }
-        @media (min-width: 1440px){
-          main{ padding: 34px 32px 118px !important; }
-        }
-      `}</style>
+      <DriverBottomNav />
     </div>
   );
 }

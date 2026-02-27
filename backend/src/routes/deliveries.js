@@ -3,6 +3,8 @@ import { db } from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
+import { upload } from "../upload.js";
+import { createNotification } from "../utils/notify.js";
 
 const router = Router();
 
@@ -25,7 +27,10 @@ async function getFetch() {
 
 /** Address hash: used to detect when an address changed */
 function addrHash(s) {
-  return crypto.createHash("sha1").update(String(s || "").trim()).digest("hex");
+  return crypto
+    .createHash("sha1")
+    .update(String(s || "").trim())
+    .digest("hex");
 }
 
 /** Route cache key: changes if pickup/dropoff coords change */
@@ -38,7 +43,7 @@ function routeKey(pickup, dropoff) {
 function safeJsonParse(v) {
   if (v == null) return null;
   if (Array.isArray(v)) return v;
-  if (typeof v === "object") return v; // already parsed by driver in some configs
+  if (typeof v === "object") return v;
   if (typeof v !== "string") return null;
 
   try {
@@ -55,22 +60,19 @@ function safeJsonParse(v) {
 async function ensurePendingEvent(deliveryId, createdBy = null) {
   const exists = await db.query(
     `SELECT 1 FROM delivery_events WHERE delivery_id=$1 AND status='PENDING' LIMIT 1`,
-    [deliveryId]
+    [deliveryId],
   );
   if (exists.rows.length) return;
 
   await db.query(
     `INSERT INTO delivery_events (delivery_id, status, note, created_by)
      VALUES ($1,'PENDING','Order created',$2)`,
-    [deliveryId, createdBy]
+    [deliveryId, createdBy],
   );
 }
 
 /**
  * Geocode helper (OpenStreetMap Nominatim)
- * NOTE:
- * - Requires a User-Agent
- * - Keep usage reasonable (no tight loops)
  */
 async function geocodeAddress(address) {
   const a = String(address || "").trim();
@@ -78,11 +80,7 @@ async function geocodeAddress(address) {
 
   const url =
     "https://nominatim.openstreetmap.org/search?" +
-    new URLSearchParams({
-      q: a,
-      format: "json",
-      limit: "1",
-    });
+    new URLSearchParams({ q: a, format: "json", limit: "1" });
 
   try {
     const _fetch = await getFetch();
@@ -98,10 +96,7 @@ async function geocodeAddress(address) {
     const data = await res.json();
     if (!Array.isArray(data) || data.length === 0) return null;
 
-    return {
-      lat: parseFloat(data[0].lat),
-      lng: parseFloat(data[0].lon),
-    };
+    return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
   } catch {
     return null;
   }
@@ -109,11 +104,10 @@ async function geocodeAddress(address) {
 
 /**
  * Road routing helper (OSRM public server)
- * Returns route as [[lat,lng], ...] for react-leaflet Polyline
- * OSRM expects lon,lat pairs.
  */
 async function getRoadRoutePickupDropoff(pickup, dropoff) {
-  if (!pickup?.lat || !pickup?.lng || !dropoff?.lat || !dropoff?.lng) return null;
+  if (!pickup?.lat || !pickup?.lng || !dropoff?.lat || !dropoff?.lng)
+    return null;
 
   const coordStr = `${pickup.lng},${pickup.lat};${dropoff.lng},${dropoff.lat}`;
 
@@ -132,8 +126,6 @@ async function getRoadRoutePickupDropoff(pickup, dropoff) {
 
     const data = await res.json();
     const coords = data?.routes?.[0]?.geometry?.coordinates;
-
-    // OSRM returns [lon,lat]. Convert to [lat,lng].
     if (!Array.isArray(coords) || coords.length < 2) return null;
 
     return coords.map(([lon, lat]) => [lat, lon]);
@@ -145,8 +137,6 @@ async function getRoadRoutePickupDropoff(pickup, dropoff) {
 /* =========================================
    CUSTOMER TRACKING
    GET /deliveries/track?ref=ORD-...
-   - Cached geocoding in deliveries table
-   - Cached route_points (pickup->dropoff) in deliveries table
    ========================================= */
 router.get("/track", requireAuth, async (req, res) => {
   try {
@@ -158,10 +148,11 @@ router.get("/track", requireAuth, async (req, res) => {
        FROM deliveries
        WHERE reference_no=$1
        LIMIT 1`,
-      [String(ref).trim()]
+      [String(ref).trim()],
     );
 
-    if (!d.rows.length) return res.status(404).json({ message: "Reference not found" });
+    if (!d.rows.length)
+      return res.status(404).json({ message: "Reference not found" });
 
     let delivery = d.rows[0];
 
@@ -175,11 +166,13 @@ router.get("/track", requireAuth, async (req, res) => {
          FROM drivers d
          JOIN users u ON u.id = d.user_id
          WHERE d.id=$1`,
-        [delivery.assigned_driver_id]
+        [delivery.assigned_driver_id],
       );
 
       if (who.rows.length) {
-        driver = { name: who.rows[0].name || `Driver #${who.rows[0].driver_id}` };
+        driver = {
+          name: who.rows[0].name || `Driver #${who.rows[0].driver_id}`,
+        };
       }
 
       const loc = await db.query(
@@ -188,13 +181,13 @@ router.get("/track", requireAuth, async (req, res) => {
          WHERE driver_id=$1
          ORDER BY updated_at DESC
          LIMIT 1`,
-        [delivery.assigned_driver_id]
+        [delivery.assigned_driver_id],
       );
 
       if (loc.rows.length) driver_location = loc.rows[0];
     }
 
-    // ===== Cached geocoding =====
+    // Cached geocoding
     const pHash = addrHash(delivery.pickup_address);
     const dHash = addrHash(delivery.dropoff_address);
 
@@ -250,10 +243,12 @@ router.get("/track", requireAuth, async (req, res) => {
           pHash,
           dHash,
           delivery.id,
-        ]
+        ],
       );
 
-      const refreshed = await db.query(`SELECT * FROM deliveries WHERE id=$1`, [delivery.id]);
+      const refreshed = await db.query(`SELECT * FROM deliveries WHERE id=$1`, [
+        delivery.id,
+      ]);
       if (refreshed.rows.length) delivery = refreshed.rows[0];
     }
 
@@ -264,10 +259,13 @@ router.get("/track", requireAuth, async (req, res) => {
 
     const dropoff =
       delivery.dropoff_lat && delivery.dropoff_lng
-        ? { lat: Number(delivery.dropoff_lat), lng: Number(delivery.dropoff_lng) }
+        ? {
+            lat: Number(delivery.dropoff_lat),
+            lng: Number(delivery.dropoff_lng),
+          }
         : null;
 
-    // ===== Route caching (pickup -> dropoff only) =====
+    // Route caching (pickup -> dropoff only)
     let route = null;
 
     if (pickup && dropoff) {
@@ -293,10 +291,13 @@ router.get("/track", requireAuth, async (req, res) => {
                  route_cache_key=$2,
                  route_cached_at=NOW()
              WHERE id=$3`,
-            [JSON.stringify(route), key, delivery.id]
+            [JSON.stringify(route), key, delivery.id],
           );
 
-          const refreshed = await db.query(`SELECT * FROM deliveries WHERE id=$1`, [delivery.id]);
+          const refreshed = await db.query(
+            `SELECT * FROM deliveries WHERE id=$1`,
+            [delivery.id],
+          );
           if (refreshed.rows.length) delivery = refreshed.rows[0];
         } else {
           route = [
@@ -325,10 +326,6 @@ router.get("/track", requireAuth, async (req, res) => {
 /* =========================================
    FEEDBACK REPORTS (Admin/Dispatcher)
    GET /deliveries/feedback
-   Query params:
-     - q: search in reference_no, customer name/email, comment
-     - min_rating, max_rating
-     - limit, offset
    ========================================= */
 router.get("/feedback", requireAuth, async (req, res) => {
   try {
@@ -337,8 +334,10 @@ router.get("/feedback", requireAuth, async (req, res) => {
     }
 
     const q = String(req.query.q || "").trim();
-    const minRating = req.query.min_rating != null ? Number(req.query.min_rating) : null;
-    const maxRating = req.query.max_rating != null ? Number(req.query.max_rating) : null;
+    const minRating =
+      req.query.min_rating != null ? Number(req.query.min_rating) : null;
+    const maxRating =
+      req.query.max_rating != null ? Number(req.query.max_rating) : null;
     const limit = Math.min(Math.max(Number(req.query.limit || 50), 1), 200);
     const offset = Math.max(Number(req.query.offset || 0), 0);
 
@@ -349,7 +348,7 @@ router.get("/feedback", requireAuth, async (req, res) => {
       params.push(`%${q}%`);
       const i = params.length;
       where.push(
-        `(d.reference_no ILIKE $${i} OR COALESCE(u.name,'') ILIKE $${i} OR COALESCE(u.email,'') ILIKE $${i} OR COALESCE(f.comment,'') ILIKE $${i})`
+        `(d.reference_no ILIKE $${i} OR COALESCE(u.name,'') ILIKE $${i} OR COALESCE(u.email,'') ILIKE $${i} OR COALESCE(f.comment,'') ILIKE $${i})`,
       );
     }
 
@@ -371,7 +370,7 @@ router.get("/feedback", requireAuth, async (req, res) => {
        JOIN deliveries d ON d.id=f.delivery_id
        LEFT JOIN users u ON u.id=f.created_by
        ${whereSql}`,
-      params
+      params,
     );
 
     params.push(limit);
@@ -382,6 +381,7 @@ router.get("/feedback", requireAuth, async (req, res) => {
          f.delivery_id,
          f.rating,
          f.comment,
+         f.photo_url,
          f.created_at,
 
          u.id AS customer_user_id,
@@ -400,15 +400,13 @@ router.get("/feedback", requireAuth, async (req, res) => {
        FROM delivery_feedback f
        JOIN deliveries d ON d.id=f.delivery_id
        LEFT JOIN users u ON u.id=f.created_by
-
-       -- driver join (delivery.assigned_driver_id -> drivers -> users)
        LEFT JOIN drivers drv ON drv.id = d.assigned_driver_id
        LEFT JOIN users du ON du.id = drv.user_id
 
        ${whereSql}
        ORDER BY f.created_at DESC
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
-      params
+      params,
     );
 
     const summaryR = await db.query(
@@ -421,7 +419,7 @@ router.get("/feedback", requireAuth, async (req, res) => {
          SUM(CASE WHEN rating=2 THEN 1 ELSE 0 END)::int AS two_star,
          SUM(CASE WHEN rating=1 THEN 1 ELSE 0 END)::int AS one_star
        FROM delivery_feedback`,
-      []
+      [],
     );
 
     return res.json({
@@ -461,8 +459,12 @@ router.get("/", requireAuth, async (req, res) => {
     const params = [];
 
     if (status && status !== "ALL") {
-      params.push(status);
-      where.push(`d.status = $${params.length}`);
+      if (status === "UNASSIGNED") {
+        where.push(`d.assigned_driver_id IS NULL`);
+      } else {
+        params.push(status);
+        where.push(`d.status = $${params.length}`);
+      }
     }
 
     if (q) {
@@ -482,7 +484,7 @@ router.get("/", requireAuth, async (req, res) => {
       `SELECT COUNT(*)::int AS total
        FROM deliveries d
        ${whereSql}`,
-      params
+      params,
     );
 
     params.push(lim);
@@ -495,7 +497,7 @@ router.get("/", requireAuth, async (req, res) => {
        ORDER BY d.created_at DESC
        LIMIT $${params.length - 1}
        OFFSET $${params.length}`,
-      params
+      params,
     );
 
     res.json({ total: count.rows[0].total, rows: list.rows });
@@ -505,34 +507,90 @@ router.get("/", requireAuth, async (req, res) => {
 });
 
 /* =========================================
-   ADMIN: create a DRIVER user account
+   ADMIN/DISPATCHER: create a DRIVER user account
    POST /deliveries/driver-users
    ========================================= */
 router.post("/driver-users", requireAuth, async (req, res) => {
   try {
-    if (req.user.role !== "ADMIN") {
+    if (!["ADMIN", "DISPATCHER"].includes(req.user.role)) {
       return res.status(403).json({ message: "Forbidden" });
     }
 
     const { name, email, password } = req.body;
 
     if (!name || !email || !password) {
-      return res.status(400).json({ message: "name, email, and password are required" });
+      return res
+        .status(400)
+        .json({ message: "name, email, and password are required" });
     }
 
-    const exists = await db.query("SELECT id FROM users WHERE email=$1", [email]);
-    if (exists.rows.length) return res.status(400).json({ message: "Email already exists" });
+    const exists = await db.query("SELECT id FROM users WHERE email=$1", [
+      email,
+    ]);
+    if (exists.rows.length)
+      return res.status(400).json({ message: "Email already exists" });
 
     const hashed = await bcrypt.hash(password, 10);
 
-    const created = await db.query(
-      `INSERT INTO users (name, email, password, role)
-       VALUES ($1,$2,$3,'DRIVER')
-       RETURNING id, name, email, role`,
-      [name, email, hashed]
-    );
+    const passwordColsToTry = ["password_hash", "hashed_password", "password"];
 
-    return res.json(created.rows[0]);
+    let createdUser = null;
+    let lastErr = null;
+
+    for (const col of passwordColsToTry) {
+      try {
+        const r = await db.query(
+          `INSERT INTO users (name, email, ${col}, role)
+           VALUES ($1,$2,$3,'DRIVER')
+           RETURNING id, name, email, role`,
+          [name, email, hashed],
+        );
+        createdUser = r.rows[0];
+        break;
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+
+    if (!createdUser) {
+      return res.status(500).json({
+        message: "Server error",
+        error:
+          lastErr?.message ||
+          "Failed to create user (password column mismatch)",
+      });
+    }
+
+    // Ensure a drivers row exists immediately
+    try {
+      await db.query(
+        `INSERT INTO drivers (user_id, status)
+         VALUES ($1, 'AVAILABLE')
+         ON CONFLICT (user_id) DO NOTHING`,
+        [createdUser.id],
+      );
+    } catch {
+      // ignore if schema differs
+    }
+
+    // ✅ Notifications hook (driver created via /deliveries/driver-users too)
+    try {
+      await createNotification({
+        type: "DRIVERS",
+        subtype: "DRIVER_USER_CREATED",
+        entity_id: createdUser.id,
+        title: "New Driver Account Created:",
+        message: `${createdUser.name} has just been added as a new driver account.`,
+        created_by: req.user.id,
+      });
+    } catch (e) {
+      console.warn(
+        "createNotification DRIVER_USER_CREATED failed:",
+        e?.message || e,
+      );
+    }
+
+    return res.json(createdUser);
   } catch (e) {
     return res.status(500).json({ message: "Server error", error: e.message });
   }
@@ -552,16 +610,23 @@ router.get("/drivers", requireAuth, async (req, res) => {
       `SELECT id, name, email
        FROM users
        WHERE role='DRIVER'
-       ORDER BY id ASC`
+       ORDER BY id ASC`,
     );
 
     if (users.rows.length) {
-      const existing = await db.query(`SELECT id AS driver_id, user_id, status FROM drivers`);
-      const byUserId = new Map(existing.rows.map((r) => [Number(r.user_id), r]));
+      const existing = await db.query(
+        `SELECT id AS driver_id, user_id, status FROM drivers`,
+      );
+      const byUserId = new Map(
+        existing.rows.map((r) => [Number(r.user_id), r]),
+      );
 
       for (const u of users.rows) {
         if (!byUserId.has(Number(u.id))) {
-          await db.query(`INSERT INTO drivers (user_id, status) VALUES ($1,$2)`, [u.id, "AVAILABLE"]);
+          await db.query(
+            `INSERT INTO drivers (user_id, status) VALUES ($1,$2)`,
+            [u.id, "AVAILABLE"],
+          );
         }
       }
     }
@@ -576,7 +641,7 @@ router.get("/drivers", requireAuth, async (req, res) => {
        FROM drivers d
        JOIN users u ON u.id = d.user_id
        WHERE u.role='DRIVER'
-       ORDER BY d.id ASC`
+       ORDER BY d.id ASC`,
     );
 
     return res.json({ rows: r.rows });
@@ -609,7 +674,7 @@ router.get("/driver-locations", requireAuth, async (req, res) => {
        FROM driver_locations dl
        JOIN drivers d ON d.id = dl.driver_id
        JOIN users u ON u.id = d.user_id
-       ORDER BY dl.updated_at DESC`
+       ORDER BY dl.updated_at DESC`,
     );
 
     return res.json({ rows: r.rows });
@@ -624,22 +689,29 @@ router.get("/driver-locations", requireAuth, async (req, res) => {
    ========================================= */
 router.post("/drivers", requireAuth, async (req, res) => {
   try {
-    if (req.user.role !== "ADMIN") return res.status(403).json({ message: "Forbidden" });
+    if (!["ADMIN", "DISPATCHER"].includes(req.user.role)) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
 
     const { user_id, status } = req.body;
-    if (!user_id) return res.status(400).json({ message: "user_id is required" });
+    if (!user_id)
+      return res.status(400).json({ message: "user_id is required" });
 
     const u = await db.query("SELECT id FROM users WHERE id=$1", [user_id]);
-    if (!u.rows.length) return res.status(404).json({ message: "User not found" });
+    if (!u.rows.length)
+      return res.status(404).json({ message: "User not found" });
 
-    const existing = await db.query("SELECT id FROM drivers WHERE user_id=$1", [user_id]);
-    if (existing.rows.length) return res.status(400).json({ message: "Driver already exists" });
+    const existing = await db.query("SELECT id FROM drivers WHERE user_id=$1", [
+      user_id,
+    ]);
+    if (existing.rows.length)
+      return res.status(400).json({ message: "Driver already exists" });
 
     const r = await db.query(
       `INSERT INTO drivers (user_id, status)
        VALUES ($1, $2)
        RETURNING id AS driver_id, user_id, status`,
-      [user_id, (status || "AVAILABLE").toUpperCase()]
+      [user_id, (status || "AVAILABLE").toUpperCase()],
     );
 
     return res.json({ ...r.rows[0], name: `Driver #${r.rows[0].driver_id}` });
@@ -654,12 +726,14 @@ router.post("/drivers", requireAuth, async (req, res) => {
    ========================================= */
 router.patch("/drivers/:driverId", requireAuth, async (req, res) => {
   try {
-    if (req.user.role !== "ADMIN") return res.status(403).json({ message: "Forbidden" });
+    if (req.user.role !== "ADMIN")
+      return res.status(403).json({ message: "Forbidden" });
 
     const driverId = Number(req.params.driverId);
     const { status } = req.body;
 
-    if (!driverId) return res.status(400).json({ message: "Invalid driver id" });
+    if (!driverId)
+      return res.status(400).json({ message: "Invalid driver id" });
     if (!status) return res.status(400).json({ message: "status is required" });
 
     const r = await db.query(
@@ -667,10 +741,11 @@ router.patch("/drivers/:driverId", requireAuth, async (req, res) => {
        SET status=$1
        WHERE id=$2
        RETURNING id AS driver_id, user_id, status`,
-      [String(status).toUpperCase(), driverId]
+      [String(status).toUpperCase(), driverId],
     );
 
-    if (!r.rows.length) return res.status(404).json({ message: "Driver not found" });
+    if (!r.rows.length)
+      return res.status(404).json({ message: "Driver not found" });
     return res.json({ ...r.rows[0], name: `Driver #${r.rows[0].driver_id}` });
   } catch (e) {
     return res.status(500).json({ message: "Server error", error: e.message });
@@ -683,7 +758,9 @@ router.patch("/drivers/:driverId", requireAuth, async (req, res) => {
    ========================================= */
 router.get("/driver-users", requireAuth, async (req, res) => {
   try {
-    if (req.user.role !== "ADMIN") return res.status(403).json({ message: "Forbidden" });
+    if (!["ADMIN", "DISPATCHER"].includes(req.user.role)) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
 
     const r = await db.query(
       `SELECT u.id, u.name, u.email
@@ -691,7 +768,7 @@ router.get("/driver-users", requireAuth, async (req, res) => {
        LEFT JOIN drivers d ON d.user_id = u.id
        WHERE u.role = 'DRIVER'
          AND d.id IS NULL
-       ORDER BY u.id ASC`
+       ORDER BY u.id ASC`,
     );
 
     return res.json({ rows: r.rows });
@@ -756,7 +833,6 @@ router.post("/", requireAuth, async (req, res) => {
           return `${yyyy}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
         }
       }
-
       return null;
     };
 
@@ -790,93 +866,104 @@ router.post("/", requireAuth, async (req, res) => {
         normalizedDate,
         String(delivery_priority || "NORMAL").toUpperCase(),
         req.user.id,
-      ]
+      ],
     );
 
     // PENDING event for timeline
     await ensurePendingEvent(result.rows[0].id, req.user.id);
 
+    // ✅ Notifications hook (order created)
+    try {
+      await createNotification({
+        type: "ORDERS",
+        subtype: "ORDER_CREATED",
+        entity_id: result.rows[0].id,
+        reference_no: result.rows[0].reference_no,
+        title: "New Order Created:",
+        message: `${result.rows[0].reference_no} has been created and is pending assignment.`,
+        created_by: req.user.id,
+      });
+    } catch (e) {
+      console.warn("createNotification ORDER_CREATED failed:", e?.message || e);
+    }
+
     return res.json(result.rows[0]);
   } catch (e) {
-    // IMPORTANT: expose real error so you can debug in the browser
-    return res.status(500).json({
-      message: "Server error",
-      error: e?.message || String(e),
-    });
+    return res
+      .status(500)
+      .json({ message: "Server error", error: e?.message || String(e) });
   }
 });
 
 /* =========================================
-   ASSIGN DRIVER (Admin/Dispatcher)
-   POST /deliveries/:id/assign
+   CUSTOMER FEEDBACK (Delivered only)
+   POST /deliveries/:id/feedback
    ========================================= */
-router.post("/:id/assign", requireAuth, async (req, res) => {
-  try {
-    if (!["ADMIN", "DISPATCHER"].includes(req.user.role)) {
-      return res.status(403).json({ message: "Forbidden" });
+router.post(
+  "/:id/feedback",
+  requireAuth,
+  upload.single("packagePhoto"),
+  async (req, res) => {
+    try {
+      const deliveryId = Number(req.params.id);
+
+      const rating = req.body?.rating;
+      const comment = req.body?.comment;
+
+      if (!deliveryId)
+        return res.status(400).json({ message: "Invalid delivery id" });
+
+      const rNum = Number(rating);
+      if (!rNum || rNum < 1 || rNum > 5) {
+        return res.status(400).json({ message: "rating must be 1-5" });
+      }
+
+      const d = await db.query(
+        "SELECT id, status FROM deliveries WHERE id=$1",
+        [deliveryId],
+      );
+      if (!d.rows.length)
+        return res.status(404).json({ message: "Delivery not found" });
+      if (d.rows[0].status !== "DELIVERED") {
+        return res
+          .status(400)
+          .json({ message: "Feedback allowed only after DELIVERED" });
+      }
+
+      const photoUrl = req.file ? `/uploads/${req.file.filename}` : null;
+
+      const exists = await db.query(
+        `SELECT 1 FROM delivery_feedback WHERE delivery_id=$1 AND created_by=$2 LIMIT 1`,
+        [deliveryId, req.user.id],
+      );
+
+      if (exists.rows.length) {
+        await db.query(
+          `UPDATE delivery_feedback
+           SET rating=$1,
+               comment=$2,
+               photo_url=COALESCE($3, photo_url),
+               created_at=NOW()
+           WHERE delivery_id=$4 AND created_by=$5`,
+          [rNum, comment || null, photoUrl, deliveryId, req.user.id],
+        );
+      } else {
+        await db.query(
+          `INSERT INTO delivery_feedback (delivery_id, rating, comment, photo_url, created_by)
+           VALUES ($1,$2,$3,$4,$5)`,
+          [deliveryId, rNum, comment || null, photoUrl, req.user.id],
+        );
+      }
+
+      return res.json({ ok: true, photo_url: photoUrl });
+    } catch (e) {
+      console.error("❌ /deliveries/:id/feedback error:", e);
+      return res
+        .status(500)
+        .json({ message: "Server error", error: String(e?.message || e) });
     }
-
-    const deliveryId = Number(req.params.id);
-
-    const raw =
-      req.body?.driver_id ??
-      req.body?.driverId ??
-      req.body?.driverID ??
-      req.body?.assigned_driver_id ??
-      req.body?.assignedDriverId;
-
-    const driver_id = Number(raw);
-
-    if (!deliveryId || !driver_id) {
-      return res.status(400).json({ message: "Missing delivery id or driverId" });
-    }
-
-    const driver = await db.query("SELECT id FROM drivers WHERE id=$1", [driver_id]);
-    if (!driver.rows.length) return res.status(404).json({ message: "Driver not found" });
-
-    const before = await db.query(
-      `SELECT assigned_driver_id
-       FROM deliveries
-       WHERE id=$1`,
-      [deliveryId]
-    );
-    if (!before.rows.length) return res.status(404).json({ message: "Delivery not found" });
-
-    const prevDriverId = before.rows[0].assigned_driver_id
-      ? Number(before.rows[0].assigned_driver_id)
-      : null;
-    const isReassign = prevDriverId && prevDriverId !== driver_id;
-
-    const updated = await db.query(
-      `UPDATE deliveries
-       SET assigned_driver_id=$1,
-           status='ASSIGNED'
-       WHERE id=$2
-       RETURNING *`,
-      [driver_id, deliveryId]
-    );
-
-    if (!updated.rows.length) return res.status(404).json({ message: "Delivery not found" });
-
-    // ✅ Backfill PENDING for older deliveries (so timeline always starts correctly)
-    await ensurePendingEvent(deliveryId, req.user.id);
-
-    // ✅ Log ASSIGNED for timeline
-    await db.query(
-      `INSERT INTO delivery_events (delivery_id, status, note, created_by)
-       VALUES ($1,'ASSIGNED',$2,$3)`,
-      [
-        deliveryId,
-        isReassign ? `Reassigned ${prevDriverId} -> ${driver_id}` : `Assigned to driver_id=${driver_id}`,
-        req.user.id,
-      ]
-    );
-
-    return res.json(updated.rows[0]);
-  } catch (e) {
-    return res.status(500).json({ message: "Server error", error: e.message });
-  }
-});
+  },
+);
 
 /* =========================================
    GET DELIVERY EVENTS (Admin/Dispatcher)
@@ -889,9 +976,6 @@ router.get("/:id/events", requireAuth, async (req, res) => {
     }
 
     const deliveryId = Number(req.params.id);
-
-    // ✅ Backfill PENDING whenever someone views the timeline
-    // (covers old deliveries created before event-logging)
     await ensurePendingEvent(deliveryId, req.user.id);
 
     const r = await db.query(
@@ -899,7 +983,7 @@ router.get("/:id/events", requireAuth, async (req, res) => {
        FROM delivery_events
        WHERE delivery_id=$1
        ORDER BY created_at ASC`,
-      [deliveryId]
+      [deliveryId],
     );
 
     res.json({ rows: r.rows });
@@ -920,14 +1004,12 @@ router.get("/:id/pod", requireAuth, async (req, res) => {
 
     const deliveryId = Number(req.params.id);
 
-    const r = await db.query(
-      `SELECT *
-       FROM pod
-       WHERE delivery_id=$1`,
-      [deliveryId]
-    );
+    const r = await db.query(`SELECT * FROM pod WHERE delivery_id=$1`, [
+      deliveryId,
+    ]);
 
-    if (!r.rows.length) return res.status(404).json({ message: "POD not found" });
+    if (!r.rows.length)
+      return res.status(404).json({ message: "POD not found" });
     res.json(r.rows[0]);
   } catch (e) {
     res.status(500).json({ message: "Server error", error: e.message });
@@ -947,52 +1029,15 @@ router.get("/:id/failure", requireAuth, async (req, res) => {
     const deliveryId = Number(req.params.id);
 
     const r = await db.query(
-      `SELECT *
-       FROM delivery_failures
-       WHERE delivery_id=$1`,
-      [deliveryId]
+      `SELECT * FROM delivery_failures WHERE delivery_id=$1`,
+      [deliveryId],
     );
 
-    if (!r.rows.length) return res.status(404).json({ message: "Failure record not found" });
+    if (!r.rows.length)
+      return res.status(404).json({ message: "Failure record not found" });
     res.json(r.rows[0]);
   } catch (e) {
     res.status(500).json({ message: "Server error", error: e.message });
-  }
-});
-
-/* =========================================
-   CUSTOMER FEEDBACK (Delivered only)
-   POST /deliveries/:id/feedback
-   ========================================= */
-router.post("/:id/feedback", requireAuth, async (req, res) => {
-  try {
-    const deliveryId = Number(req.params.id);
-    const { rating, comment } = req.body;
-
-    if (!deliveryId) return res.status(400).json({ message: "Invalid delivery id" });
-
-    const rNum = Number(rating);
-    if (!rNum || rNum < 1 || rNum > 5) {
-      return res.status(400).json({ message: "rating must be 1-5" });
-    }
-
-    const d = await db.query("SELECT id, status FROM deliveries WHERE id=$1", [deliveryId]);
-    if (!d.rows.length) return res.status(404).json({ message: "Delivery not found" });
-    if (d.rows[0].status !== "DELIVERED") {
-      return res.status(400).json({ message: "Feedback allowed only after DELIVERED" });
-    }
-
-    await db.query(
-      `INSERT INTO delivery_feedback (delivery_id, rating, comment, created_by)
-       VALUES ($1,$2,$3,$4)
-       ON CONFLICT (delivery_id, created_by)
-       DO UPDATE SET rating=EXCLUDED.rating, comment=EXCLUDED.comment, created_at=NOW()`,
-      [deliveryId, rNum, comment || null, req.user.id]
-    );
-
-    return res.json({ ok: true });
-  } catch (e) {
-    return res.status(500).json({ message: "Server error", error: e.message });
   }
 });
 
@@ -1007,13 +1052,20 @@ router.delete("/:id", requireAuth, async (req, res) => {
     }
 
     const deliveryId = Number(req.params.id);
-    if (!deliveryId) return res.status(400).json({ message: "Invalid delivery id" });
+    if (!deliveryId)
+      return res.status(400).json({ message: "Invalid delivery id" });
 
-    const check = await db.query("SELECT id, status FROM deliveries WHERE id=$1", [deliveryId]);
-    if (!check.rows.length) return res.status(404).json({ message: "Delivery not found" });
+    const check = await db.query(
+      "SELECT id, status FROM deliveries WHERE id=$1",
+      [deliveryId],
+    );
+    if (!check.rows.length)
+      return res.status(404).json({ message: "Delivery not found" });
 
     if (check.rows[0].status === "DELIVERED") {
-      return res.status(400).json({ message: "Cannot delete a delivered delivery" });
+      return res
+        .status(400)
+        .json({ message: "Cannot delete a delivered delivery" });
     }
 
     const tryDelete = async (sql, params) => {
@@ -1023,16 +1075,117 @@ router.delete("/:id", requireAuth, async (req, res) => {
     };
 
     await tryDelete("DELETE FROM pod WHERE delivery_id=$1", [deliveryId]);
-    await tryDelete("DELETE FROM delivery_events WHERE delivery_id=$1", [deliveryId]);
-    await tryDelete("DELETE FROM delivery_failures WHERE delivery_id=$1", [deliveryId]);
-    await tryDelete("DELETE FROM delivery_failure WHERE delivery_id=$1", [deliveryId]);
+    await tryDelete("DELETE FROM delivery_events WHERE delivery_id=$1", [
+      deliveryId,
+    ]);
+    await tryDelete("DELETE FROM delivery_failures WHERE delivery_id=$1", [
+      deliveryId,
+    ]);
+    await tryDelete("DELETE FROM delivery_failure WHERE delivery_id=$1", [
+      deliveryId,
+    ]);
     await tryDelete("DELETE FROM failures WHERE delivery_id=$1", [deliveryId]);
-    await tryDelete("DELETE FROM delivery_feedback WHERE delivery_id=$1", [deliveryId]);
+    await tryDelete("DELETE FROM delivery_feedback WHERE delivery_id=$1", [
+      deliveryId,
+    ]);
 
-    const del = await db.query("DELETE FROM deliveries WHERE id=$1 RETURNING id", [deliveryId]);
-    if (!del.rows.length) return res.status(404).json({ message: "Delivery not found" });
+    const del = await db.query(
+      "DELETE FROM deliveries WHERE id=$1 RETURNING id",
+      [deliveryId],
+    );
+    if (!del.rows.length)
+      return res.status(404).json({ message: "Delivery not found" });
 
     return res.json({ ok: true, deleted_id: del.rows[0].id });
+  } catch (e) {
+    return res.status(500).json({ message: "Server error", error: e.message });
+  }
+});
+
+/* =========================================
+   ASSIGN DRIVER (Admin/Dispatcher)
+   POST /deliveries/:id/assign
+   Body: { driver_id: number }
+   ========================================= */
+router.post("/:id/assign", requireAuth, async (req, res) => {
+  try {
+    if (!["ADMIN", "DISPATCHER"].includes(req.user.role)) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    const deliveryId = Number(req.params.id);
+
+    const raw =
+      req.body?.driver_id ??
+      req.body?.driverId ??
+      req.body?.driverID ??
+      req.body?.assigned_driver_id ??
+      req.body?.assignedDriverId;
+
+    const driver_id = Number(raw);
+
+    if (!deliveryId || !driver_id) {
+      return res
+        .status(400)
+        .json({ message: "Missing delivery id or driverId" });
+    }
+
+    const driver = await db.query("SELECT id FROM drivers WHERE id=$1", [
+      driver_id,
+    ]);
+    if (!driver.rows.length)
+      return res.status(404).json({ message: "Driver not found" });
+
+    const delivery = await db.query(
+      "SELECT id, reference_no FROM deliveries WHERE id=$1",
+      [deliveryId],
+    );
+    if (!delivery.rows.length)
+      return res.status(404).json({ message: "Delivery not found" });
+
+    const updated = await db.query(
+      `UPDATE deliveries
+       SET assigned_driver_id=$1,
+           status='ASSIGNED'
+       WHERE id=$2
+       RETURNING *`,
+      [driver_id, deliveryId],
+    );
+
+    // Keep timeline consistent
+    await ensurePendingEvent(deliveryId, req.user.id);
+
+    // Log ASSIGNED event (safe: if your check constraint doesn't allow ASSIGNED in delivery_events, remove this insert)
+    try {
+      await db.query(
+        `INSERT INTO delivery_events (delivery_id, status, note, created_by)
+         VALUES ($1,'ASSIGNED',$2,$3)`,
+        [deliveryId, `Assigned to driver #${driver_id}`, req.user.id],
+      );
+    } catch (e) {
+      // Do not break assignment if events table has a constraint
+      console.warn("delivery_events ASSIGNED insert failed:", e?.message || e);
+    }
+
+    // ✅ Notifications hook (order assigned)
+    try {
+      await createNotification({
+        type: "ORDERS",
+        subtype: "ORDER_ASSIGNED",
+        entity_id: deliveryId,
+        reference_no: updated.rows[0].reference_no,
+        title: "New Order Assigned:",
+        message: `${updated.rows[0].reference_no} has been assigned to Driver #${driver_id}.`,
+        created_by: req.user.id,
+      });
+    } catch (e) {
+      console.warn(
+        "createNotification ORDER_ASSIGNED failed:",
+        e?.message || e,
+      );
+    }
+
+    return res.json(updated.rows[0]);
   } catch (e) {
     return res.status(500).json({ message: "Server error", error: e.message });
   }
@@ -1046,28 +1199,53 @@ router.post("/:id/cancel", requireAuth, async (req, res) => {
     }
 
     const deliveryId = Number(req.params.id);
-    if (!deliveryId) return res.status(400).json({ message: "Invalid delivery id" });
+    if (!deliveryId)
+      return res.status(400).json({ message: "Invalid delivery id" });
 
-    const cur = await db.query("SELECT id, status, reference_no FROM deliveries WHERE id=$1", [deliveryId]);
-    if (!cur.rows.length) return res.status(404).json({ message: "Delivery not found" });
+    const cur = await db.query(
+      "SELECT id, status, reference_no FROM deliveries WHERE id=$1",
+      [deliveryId],
+    );
+    if (!cur.rows.length)
+      return res.status(404).json({ message: "Delivery not found" });
 
     const current = cur.rows[0].status;
     if (["DELIVERED", "FAILED", "CANCELLED"].includes(current)) {
-      return res.status(400).json({ message: `Cannot cancel a ${current} delivery` });
+      return res
+        .status(400)
+        .json({ message: `Cannot cancel a ${current} delivery` });
     }
 
-    const updated = await db.query(`UPDATE deliveries SET status='CANCELLED' WHERE id=$1 RETURNING *`, [
-      deliveryId,
-    ]);
+    const updated = await db.query(
+      `UPDATE deliveries SET status='CANCELLED' WHERE id=$1 RETURNING *`,
+      [deliveryId],
+    );
 
-    // ✅ Backfill PENDING just in case timeline is missing it (older data)
     await ensurePendingEvent(deliveryId, req.user.id);
 
     await db.query(
       `INSERT INTO delivery_events (delivery_id, status, note, created_by)
        VALUES ($1,'CANCELLED',$2,$3)`,
-      [deliveryId, `Cancelled by ${req.user.role}`, req.user.id]
+      [deliveryId, `Cancelled by ${req.user.role}`, req.user.id],
     );
+
+    // ✅ Notifications hook (order cancelled)
+    try {
+      await createNotification({
+        type: "ORDERS",
+        subtype: "ORDER_CANCELLED",
+        entity_id: deliveryId,
+        reference_no: cur.rows[0].reference_no,
+        title: "Order Cancelled:",
+        message: `${cur.rows[0].reference_no} was cancelled by ${req.user.role}.`,
+        created_by: req.user.id,
+      });
+    } catch (e) {
+      console.warn(
+        "createNotification ORDER_CANCELLED failed:",
+        e?.message || e,
+      );
+    }
 
     return res.json(updated.rows[0]);
   } catch (e) {

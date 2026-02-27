@@ -7,12 +7,12 @@ import authRoutes from "./routes/auth.js";
 import deliveriesRoutes from "./routes/deliveries.js";
 import driverRoutes from "./routes/driver.js";
 import adminRoutes from "./routes/admin.js";
+import notificationsRoutes from "./routes/notifications.js";
 
 import path from "path";
 import { fileURLToPath } from "url";
 
 const app = express();
-
 
 const allowedOriginPatterns = [
   /^http:\/\/localhost:5173$/,
@@ -42,6 +42,8 @@ const corsOptions = {
   optionsSuccessStatus: 204,
 };
 
+app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
+
 app.use(cors(corsOptions));
 app.options(/.*/, cors(corsOptions)); // IMPORTANT: preflight (no "*" string)
 
@@ -60,6 +62,7 @@ app.use("/auth", authRoutes);
 app.use("/deliveries", deliveriesRoutes);
 app.use("/driver", driverRoutes);
 app.use("/admin", adminRoutes);
+app.use("/notifications", notificationsRoutes);
 
 // Start
 const PORT = process.env.PORT || 5000;

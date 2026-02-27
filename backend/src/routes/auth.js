@@ -8,6 +8,36 @@ import { sendMail } from "../utils/mailer.js";
 import { db } from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
 
+
+import multer from "multer";
+import path from "path";
+import fs from "fs";
+
+/* =========================
+   AVATAR STORAGE SETUP
+========================= */
+
+const uploadDir = path.join(process.cwd(), "uploads", "avatars");
+fs.mkdirSync(uploadDir, { recursive: true });
+
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, uploadDir),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname || "").toLowerCase() || ".jpg";
+    cb(null, `u${req.user.id}-${Date.now()}${ext}`);
+  },
+});
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 3 * 1024 * 1024 }, // 3MB
+  fileFilter: (_req, file, cb) => {
+    const ok = ["image/jpeg", "image/png", "image/webp"].includes(file.mimetype);
+    cb(ok ? null : new Error("Only JPG/PNG/WebP allowed"), ok);
+  },
+});
+
+
 const router = Router();
 
 // Google OAuth client (ID token verification)
@@ -265,6 +295,7 @@ router.post("/forgot-password", async (req, res) => {
         [tokenHash, expiresAt, user.id]
       );
 
+      // Use your local frontend URL here
       const frontend = process.env.FRONTEND_BASE_URL || "http://localhost:5173";
       const link = `${frontend}/reset-password?token=${rawToken}`;
 
@@ -309,6 +340,7 @@ This link expires in 30 minutes.`;
     return res.json({ ok: true });
   }
 });
+
 
 /**
  * POST /auth/reset-password
@@ -361,11 +393,186 @@ router.post("/reset-password", async (req, res) => {
 
 router.get("/me", requireAuth, async (req, res) => {
   const me = await db.query(
-    "SELECT id, name, email, role, created_at FROM users WHERE id=$1",
+    `SELECT id, name, email, role, created_at,
+            phone, avatar_url, bio, country, province, postal_code, address
+     FROM users
+     WHERE id=$1`,
     [req.user.id]
   );
   return res.json(me.rows[0]);
 });
+
+router.post("/me/avatar", requireAuth, upload.single("avatar"), async (req, res) => {
+  try {
+    const rel = `/uploads/avatars/${req.file.filename}`;
+
+    const updated = await db.query(
+      `UPDATE users
+       SET avatar_url=$1
+       WHERE id=$2
+       RETURNING id, name, email, role, created_at,
+                 phone, bio, country, province, postal_code, address, avatar_url`,
+      [rel, req.user.id]
+    );
+
+    return res.json(updated.rows[0]);
+  } catch (e) {
+    return res.status(500).json({ message: "Server error", error: e.message });
+  }
+});
+
+
+
+router.patch("/me", requireAuth, async (req, res) => {
+  try {
+    const body = req.body || {};
+
+    const name = typeof body.name === "string" ? body.name.trim() : undefined;
+    const emailRaw = typeof body.email === "string" ? body.email.trim() : undefined;
+
+    const phone = typeof body.phone === "string" ? body.phone.trim() : undefined;
+    const bio = typeof body.bio === "string" ? body.bio.trim() : undefined;
+
+    const country = typeof body.country === "string" ? body.country.trim() : undefined;
+    const province = typeof body.province === "string" ? body.province.trim() : undefined;
+    const postal_code = typeof body.postal_code === "string"
+      ? body.postal_code.trim()
+      : typeof body.postalCode === "string"
+      ? body.postalCode.trim()
+      : undefined;
+
+    const address = typeof body.address === "string" ? body.address.trim() : undefined;
+
+    // Basic validation (lightweight + safe)
+    if (name !== undefined && name.length < 2) {
+      return res.status(400).json({ message: "Name is too short" });
+    }
+
+    let email;
+    if (emailRaw !== undefined) {
+      email = emailRaw.toLowerCase();
+      const isValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+      if (!isValidEmail) return res.status(400).json({ message: "Invalid email address" });
+
+      const exists = await db.query("SELECT id FROM users WHERE email=$1 AND id<>$2", [
+        email,
+        req.user.id,
+      ]);
+      if (exists.rows.length) return res.status(409).json({ message: "Email already used" });
+    }
+
+    if (phone !== undefined) {
+      const cleaned = phone.replace(/\s+/g, "");
+      // allow +, digits, -, (), spaces (common PH formats)
+      const ok = /^[0-9+().-]{6,20}$/.test(cleaned);
+      if (!ok) return res.status(400).json({ message: "Invalid phone number" });
+    }
+
+    if (bio !== undefined && bio.length > 500) {
+      return res.status(400).json({ message: "Bio is too long (max 500 chars)" });
+    }
+
+    if (postal_code !== undefined && postal_code.length > 20) {
+      return res.status(400).json({ message: "Postal code is too long" });
+    }
+
+    // Build dynamic UPDATE
+    const fields = [];
+    const values = [];
+    let i = 1;
+
+    const add = (col, val) => {
+      fields.push(`${col}=$${i++}`);
+      values.push(val);
+    };
+
+    if (name !== undefined) add("name", name);
+    if (email !== undefined) add("email", email);
+
+    if (phone !== undefined) add("phone", phone);
+    if (bio !== undefined) add("bio", bio);
+    if (country !== undefined) add("country", country);
+    if (province !== undefined) add("province", province);
+    if (postal_code !== undefined) add("postal_code", postal_code);
+    if (address !== undefined) add("address", address);
+
+    if (!fields.length) {
+      return res.status(400).json({ message: "Nothing to update" });
+    }
+
+    values.push(req.user.id);
+
+    const updated = await db.query(
+      `UPDATE users
+       SET ${fields.join(", ")}
+       WHERE id=$${i}
+       RETURNING id, name, email, role, created_at,
+                 phone, avatar_url, bio, country, province, postal_code, address`,
+      values
+    );
+
+    return res.json(updated.rows[0]);
+  } catch (e) {
+    return res.status(500).json({ message: "Server error", error: e.message });
+  }
+});
+
+
+router.patch("/me", requireAuth, async (req, res) => {
+  try {
+    const name = typeof req.body?.name === "string" ? req.body.name.trim() : undefined;
+    const emailRaw = typeof req.body?.email === "string" ? req.body.email.trim() : undefined;
+
+    // allow updating name and/or email
+    if (name !== undefined && name.length < 2) {
+      return res.status(400).json({ message: "Name is too short" });
+    }
+
+    let email;
+    if (emailRaw !== undefined) {
+      email = emailRaw.toLowerCase();
+      const isValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+      if (!isValidEmail) return res.status(400).json({ message: "Invalid email address" });
+
+      // prevent duplicate email
+      const exists = await db.query("SELECT id FROM users WHERE email=$1 AND id<>$2", [
+        email,
+        req.user.id,
+      ]);
+      if (exists.rows.length) return res.status(409).json({ message: "Email already used" });
+    }
+
+    // Build dynamic UPDATE
+    const fields = [];
+    const values = [];
+    let i = 1;
+
+    if (name !== undefined) {
+      fields.push(`name=$${i++}`);
+      values.push(name);
+    }
+    if (email !== undefined) {
+      fields.push(`email=$${i++}`);
+      values.push(email);
+    }
+
+    if (!fields.length) {
+      return res.status(400).json({ message: "Nothing to update" });
+    }
+
+    values.push(req.user.id);
+
+    const updated = await db.query(
+      `UPDATE users SET ${fields.join(", ")} WHERE id=$${i} RETURNING id, name, email, role, created_at`,
+      values
+    );
+
+    return res.json(updated.rows[0]);
+  } catch (e) {
+    return res.status(500).json({ message: "Server error", error: e.message });
+  }
+});
+
 
 /**
  * POST /auth/google

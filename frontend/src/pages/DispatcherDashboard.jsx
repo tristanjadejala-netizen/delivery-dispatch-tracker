@@ -11,9 +11,10 @@ import ControlsPanel from "../components/dispatcher/ControlsPanel";
 import StatusTabs from "../components/dispatcher/StatusTabs";
 import DeliveryCard from "../components/dispatcher/DeliveryCard";
 import Icon from "../components/dispatcher/Icons";
+import SectionHeader from "../components/dispatcher/SectionHeader";
 
 const API_BASE = "http://localhost:5000";
-const STATUS_TABS = ["ALL", "ACTIVE", "DELIVERED", "FAILED"];
+const STATUS_TABS = ["ALL", "UNASSIGNED", "ACTIVE", "DELIVERED", "FAILED"];
 
 function fmt(iso) {
   if (!iso) return "—";
@@ -62,9 +63,23 @@ export default function DispatcherDashboard() {
   const [bulkDriverId, setBulkDriverId] = useState("");
   const [bulkAssigning, setBulkAssigning] = useState(false);
 
-  async function loadDeliveries() {
+  // Map UI tabs to a safe server-side filter.
+  // We only send strict statuses the backend is very likely to accept;
+  // "ACTIVE" and "UNASSIGNED" are derived client-side.
+  const serverStatusForTab = (t) => {
+    if (t === "DELIVERED") return "DELIVERED";
+    if (t === "FAILED") return "FAILED";
+    return "ALL"; // ALL / ACTIVE / UNASSIGNED all request ALL from server
+  };
+
+  async function loadDeliveries(nextTab = tab) {
     const { data } = await api.get("/deliveries", {
-      params: { status: "ALL", q: q || "", limit: 50, offset: 0 },
+      params: {
+        status: serverStatusForTab(nextTab),
+        q: q || "",
+        limit: 50,
+        offset: 0,
+      },
     });
 
     setDeliveries(data.rows || []);
@@ -74,7 +89,8 @@ export default function DispatcherDashboard() {
     setDriverPick((prev) => {
       const next = { ...prev };
       for (const d of data.rows || []) {
-        if (d.assigned_driver_id && next[d.id] == null) next[d.id] = String(d.assigned_driver_id);
+        if (d.assigned_driver_id && next[d.id] == null)
+          next[d.id] = String(d.assigned_driver_id);
       }
       return next;
     });
@@ -95,10 +111,14 @@ export default function DispatcherDashboard() {
     setLoading(true);
     setErr("");
     try {
-      await Promise.all([loadDeliveries(), loadDrivers()]);
+      await Promise.all([loadDeliveries(tab), loadDrivers()]);
       setLastUpdatedAt(new Date().toISOString());
     } catch (e) {
-      setErr(e?.response?.data?.error || e?.response?.data?.message || "Failed to refresh");
+      setErr(
+        e?.response?.data?.error ||
+          e?.response?.data?.message ||
+          "Failed to refresh"
+      );
     } finally {
       setLoading(false);
     }
@@ -106,7 +126,7 @@ export default function DispatcherDashboard() {
 
   async function softRefresh() {
     try {
-      await loadDeliveries();
+      await loadDeliveries(tab);
       setLastUpdatedAt(new Date().toISOString());
     } catch {
       // silent on auto-refresh
@@ -120,7 +140,7 @@ export default function DispatcherDashboard() {
 
   useEffect(() => {
     if (location.pathname === "/dispatcher") {
-      loadDeliveries().catch(() => {});
+      loadDeliveries(tab).catch(() => {});
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.pathname]);
@@ -145,10 +165,19 @@ export default function DispatcherDashboard() {
 
   const filtered = useMemo(() => {
     const rows = deliveries || [];
+
     const byTab = rows.filter((d) => {
       if (tab === "ALL") return true;
+
+      if (tab === "UNASSIGNED") {
+        // ✅ unassigned = no assigned_driver_id (null/undefined/0/"")
+        return !d.assigned_driver_id;
+      }
+
       if (tab === "DELIVERED") return d.status === "DELIVERED";
       if (tab === "FAILED") return d.status === "FAILED";
+
+      // ACTIVE = anything not terminal
       return !["DELIVERED", "FAILED", "CANCELLED"].includes(d.status);
     });
 
@@ -156,14 +185,17 @@ export default function DispatcherDashboard() {
     if (!qq) return byTab;
 
     return byTab.filter((d) => {
-      const hay = `${d.reference_no} ${d.customer_name} ${d.pickup_address} ${d.dropoff_address}`.toLowerCase();
+      const hay =
+        `${d.reference_no} ${d.customer_name} ${d.pickup_address} ${d.dropoff_address}`.toLowerCase();
       return hay.includes(qq);
     });
   }, [deliveries, tab, q]);
 
   const stats = useMemo(() => {
     const rows = deliveries || [];
-    const active = rows.filter((d) => !["DELIVERED", "FAILED", "CANCELLED"].includes(d.status)).length;
+    const active = rows.filter(
+      (d) => !["DELIVERED", "FAILED", "CANCELLED"].includes(d.status)
+    ).length;
     const delivered = rows.filter((d) => d.status === "DELIVERED").length;
     const failed = rows.filter((d) => d.status === "FAILED").length;
     return { total: rows.length, active, delivered, failed };
@@ -172,11 +204,12 @@ export default function DispatcherDashboard() {
   const exceptions = useMemo(() => {
     const rows = deliveries || [];
     const unassigned = rows.filter(
-      (d) => (d.status === "PENDING" || d.status === "ASSIGNED") && !d.assigned_driver_id
+      (d) =>
+        (d.status === "PENDING" || d.status === "ASSIGNED") &&
+        !d.assigned_driver_id
     );
     const failed = rows.filter((d) => d.status === "FAILED");
 
-    // ✅ stale drivers moved off this page; keep the tile but navigate to Drivers page
     return {
       unassignedCount: unassigned.length,
       failedCount: failed.length,
@@ -218,6 +251,31 @@ export default function DispatcherDashboard() {
 
   const selectedCount = selectedIds.size;
 
+  // ✅ Make tab buttons functional:
+  function handleTabChange(next) {
+    setTab(next);
+    clearSelection();
+
+    setOpenTimeline({});
+    setOpenPod({});
+    setOpenFailure({});
+
+    loadDeliveries(next).catch(() => {});
+  }
+
+  useEffect(() => {
+  const requestedTab = location.state?.tab;
+
+  if (!requestedTab) return;
+
+  // only act if it's a valid tab and it's different
+  if (STATUS_TABS.includes(requestedTab) && requestedTab !== tab) {
+    handleTabChange(requestedTab);
+  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [location.state]);
+
+
   async function bulkAssign() {
     if (!bulkDriverId) {
       alert("Select a driver for bulk assign first.");
@@ -233,18 +291,19 @@ export default function DispatcherDashboard() {
     setBulkAssigning(true);
     setErr("");
 
-    // sequential to avoid spiking server; still fast enough for real ops
     const failedIds = [];
     for (const id of ids) {
       try {
-        await api.post(`/deliveries/${id}/assign`, { driver_id: Number(bulkDriverId) });
+        await api.post(`/deliveries/${id}/assign`, {
+          driver_id: Number(bulkDriverId),
+        });
       } catch {
         failedIds.push(id);
       }
     }
 
     try {
-      await loadDeliveries();
+      await loadDeliveries(tab);
     } catch {
       // ignore
     } finally {
@@ -252,9 +311,12 @@ export default function DispatcherDashboard() {
     }
 
     if (failedIds.length) {
-      setErr(`Bulk assign completed with ${failedIds.length} failures. (IDs: ${failedIds.join(", ")})`);
+      setErr(
+        `Bulk assign completed with ${failedIds.length} failures. (IDs: ${failedIds.join(
+          ", "
+        )})`
+      );
     } else {
-      // Clear selection only if full success
       clearSelection();
     }
   }
@@ -269,26 +331,38 @@ export default function DispatcherDashboard() {
     setAssigningId(deliveryId);
     setErr("");
     try {
-      await api.post(`/deliveries/${deliveryId}/assign`, { driver_id: Number(picked) });
-      await loadDeliveries();
+      await api.post(`/deliveries/${deliveryId}/assign`, {
+        driver_id: Number(picked),
+      });
+      await loadDeliveries(tab);
     } catch (e) {
-      setErr(e?.response?.data?.error || e?.response?.data?.message || "Assign failed");
+      setErr(
+        e?.response?.data?.error ||
+          e?.response?.data?.message ||
+          "Assign failed"
+      );
     } finally {
       setAssigningId(null);
     }
   }
 
   async function deleteDelivery(delivery) {
-    const ok = window.confirm(`Delete order ${delivery.reference_no}?\n\nThis cannot be undone.`);
+    const ok = window.confirm(
+      `Delete order ${delivery.reference_no}?\n\nThis cannot be undone.`
+    );
     if (!ok) return;
 
     setDeletingId(delivery.id);
     setErr("");
     try {
       await api.delete(`/deliveries/${delivery.id}`);
-      await loadDeliveries();
+      await loadDeliveries(tab);
     } catch (e) {
-      setErr(e?.response?.data?.error || e?.response?.data?.message || "Delete failed");
+      setErr(
+        e?.response?.data?.error ||
+          e?.response?.data?.message ||
+          "Delete failed"
+      );
     } finally {
       setDeletingId(null);
     }
@@ -351,107 +425,125 @@ export default function DispatcherDashboard() {
   }
 
   return (
-    <div className="fp-page">
-      <div className="fp-container">
-
-        {err ? (
-          <div className="fp-alert" role="alert" aria-live="polite">
-            <span className="fp-alertIcon" aria-hidden="true">
-              <Icon name="alert" />
-            </span>
-            <div>{err}</div>
-          </div>
-        ) : null}
-
-        <StatsGrid stats={stats} />
-
-        <ControlsPanel q={q} setQ={setQ} />
-
-        <StatusTabs tabs={STATUS_TABS} tab={tab} setTab={setTab} />
-
-        {/* ✅ Bulk action bar */}
-        <div className="fp-bulkBar">
-          <div className="fp-bulkLeft">
-            <div className="fp-bulkTitle">
-              Bulk actions
-              <span className="fp-pill" style={{ marginLeft: 8 }}>
-                Selected: {selectedCount}
+    <div style={{ maxWidth: 1200 }}>
+      {/* ✅ KEEP THESE TOP TABS (Overview/Deliveries/Reports/Drivers/Map) */}
+      <SectionHeader
+        title="Deliveries"
+        subtitle="Manage assignments, verify POD, and review failed deliveries."
+      />
+      <div className="fp-page">
+        <div className="fp-container">
+          {err ? (
+            <div className="fp-alert" role="alert" aria-live="polite">
+              <span className="fp-alertIcon" aria-hidden="true">
+                <Icon name="alert" />
               </span>
+              <div>{err}</div>
             </div>
-            <div className="fp-bulkBtns">
-              <button className="fp-btn2" onClick={selectAllFiltered} disabled={filtered.length === 0}>
-                Select all in view
-              </button>
-              <button className="fp-btn2" onClick={clearSelection} disabled={selectedCount === 0}>
-                Clear
+          ) : null}
+
+          <StatsGrid stats={stats} />
+
+          <ControlsPanel q={q} setQ={setQ} />
+
+          {/* ✅ Tabs now include UNASSIGNED */}
+          <StatusTabs tabs={STATUS_TABS} tab={tab} setTab={handleTabChange} />
+
+          {/* ✅ Bulk action bar */}
+          <div className="fp-bulkBar">
+            <div className="fp-bulkLeft">
+              <div className="fp-bulkTitle">
+                Bulk actions
+                <span className="fp-pill" style={{ marginLeft: 8 }}>
+                  Selected: {selectedCount}
+                </span>
+              </div>
+              <div className="fp-bulkBtns">
+                <button
+                  className="fp-btn2"
+                  onClick={selectAllFiltered}
+                  disabled={filtered.length === 0}
+                >
+                  Select all in view
+                </button>
+                <button
+                  className="fp-btn2"
+                  onClick={clearSelection}
+                  disabled={selectedCount === 0}
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+
+            <div className="fp-bulkRight">
+              <select
+                className="fp-select"
+                value={bulkDriverId}
+                onChange={(e) => setBulkDriverId(e.target.value)}
+                disabled={drivers.length === 0}
+              >
+                <option value="">Select driver for bulk assign…</option>
+                {drivers.map((dr) => (
+                  <option key={dr.driver_id} value={dr.driver_id}>
+                    {dr.name} ({dr.status})
+                  </option>
+                ))}
+              </select>
+
+              <button
+                className="fp-btn2 fp-btn2-primary"
+                onClick={bulkAssign}
+                disabled={bulkAssigning || !bulkDriverId || selectedCount === 0}
+                title={!selectedCount ? "Select deliveries first" : ""}
+              >
+                <Icon name="route" size={16} />
+                {bulkAssigning ? "Assigning…" : "Bulk Assign"}
               </button>
             </div>
           </div>
 
-          <div className="fp-bulkRight">
-            <select
-              className="fp-select"
-              value={bulkDriverId}
-              onChange={(e) => setBulkDriverId(e.target.value)}
-              disabled={drivers.length === 0}
-            >
-              <option value="">Select driver for bulk assign…</option>
-              {drivers.map((dr) => (
-                <option key={dr.driver_id} value={dr.driver_id}>
-                  {dr.name} ({dr.status})
-                </option>
-              ))}
-            </select>
-
-            <button
-              className="fp-btn2 fp-btn2-primary"
-              onClick={bulkAssign}
-              disabled={bulkAssigning || !bulkDriverId || selectedCount === 0}
-              title={!selectedCount ? "Select deliveries first" : ""}
-            >
-              <Icon name="route" size={16} />
-              {bulkAssigning ? "Assigning…" : "Bulk Assign"}
-            </button>
+          <div className="fp-count">
+            Showing <b className="fp-strong">{filtered.length}</b> of{" "}
+            <b className="fp-strong">{deliveries.length}</b> deliveries.
+            {total ? (
+              <span className="fp-countMeta">(Server total: {total})</span>
+            ) : null}
           </div>
-        </div>
 
-        <div className="fp-count">
-          Showing <b className="fp-strong">{filtered.length}</b> of{" "}
-          <b className="fp-strong">{deliveries.length}</b> deliveries.
-          {total ? <span className="fp-countMeta">(Server total: {total})</span> : null}
-        </div>
-
-        <div className="fp-list">
-          {filtered.map((d) => (
-            <DeliveryCard
-              key={d.id}
-              delivery={d}
-              drivers={drivers}
-              driverPickValue={driverPick[d.id] || ""}
-              onPickDriver={(val) => setDriverPick((p) => ({ ...p, [d.id]: val }))}
-              onAssign={() => assignDriver(d.id)}
-              assigningId={assigningId}
-              onDelete={() => deleteDelivery(d)}
-              deletingId={deletingId}
-              toggleTimeline={() => toggleTimeline(d.id)}
-              openTimeline={!!openTimeline[d.id]}
-              events={eventsByDelivery[d.id] || []}
-              loadingEventsId={loadingEventsId}
-              togglePod={() => togglePod(d.id)}
-              openPod={!!openPod[d.id]}
-              pod={podByDelivery[d.id]}
-              loadingPodId={loadingPodId}
-              toggleFailure={() => toggleFailure(d.id)}
-              openFailure={!!openFailure[d.id]}
-              failure={failureByDelivery[d.id]}
-              loadingFailureId={loadingFailureId}
-              fmt={fmt}
-              API_BASE={API_BASE}
-              // ✅ Selection props
-              selected={selectedIds.has(d.id)}
-              onToggleSelect={() => toggleSelectOne(d.id)}
-            />
-          ))}
+          <div className="fp-list">
+            {filtered.map((d) => (
+              <DeliveryCard
+                key={d.id}
+                delivery={d}
+                drivers={drivers}
+                driverPickValue={driverPick[d.id] || ""}
+                onPickDriver={(val) =>
+                  setDriverPick((p) => ({ ...p, [d.id]: val }))
+                }
+                onAssign={() => assignDriver(d.id)}
+                assigningId={assigningId}
+                onDelete={() => deleteDelivery(d)}
+                deletingId={deletingId}
+                toggleTimeline={() => toggleTimeline(d.id)}
+                openTimeline={!!openTimeline[d.id]}
+                events={eventsByDelivery[d.id] || []}
+                loadingEventsId={loadingEventsId}
+                togglePod={() => togglePod(d.id)}
+                openPod={!!openPod[d.id]}
+                pod={podByDelivery[d.id]}
+                loadingPodId={loadingPodId}
+                toggleFailure={() => toggleFailure(d.id)}
+                openFailure={!!openFailure[d.id]}
+                failure={failureByDelivery[d.id]}
+                loadingFailureId={loadingFailureId}
+                fmt={fmt}
+                API_BASE={API_BASE}
+                selected={selectedIds.has(d.id)}
+                onToggleSelect={() => toggleSelectOne(d.id)}
+              />
+            ))}
+          </div>
         </div>
       </div>
     </div>

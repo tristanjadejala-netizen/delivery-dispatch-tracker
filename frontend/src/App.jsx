@@ -4,14 +4,20 @@ import { Routes, Route, Navigate } from "react-router-dom";
 import Login from "./pages/Login";
 import DispatcherLayout from "./pages/DispatcherLayout";
 import DispatcherOverview from "./pages/DispatcherOverview";
-import DispatcherDashboard from "./pages/DispatcherDashboard"; 
+import DispatcherDashboard from "./pages/DispatcherDashboard";
 import DispatcherDrivers from "./pages/DispatcherDrivers";
 import DispatcherMap from "./pages/DispatcherMap";
 import CreateOrder from "./pages/CreateOrder";
+import DispatcherProfile from "./pages/DispatcherProfile";
+import DispatcherSetting from "./pages/DispatcherSetting";
+import DispatcherNotifications from "./pages/DispatcherNotifications";
+import DispatcherDriverManagement from "./pages/DispatcherDriverManagement";
+
 
 import DriverLayout from "./pages/DriverLayout";
 import DriverHome from "./pages/DriverHome";
 import DriverAssigned from "./pages/DriverAssigned";
+import DriverHistory from "./pages/DriverHistory";
 import DriverProfile from "./pages/DriverProfile";
 
 import AdminDrivers from "./pages/AdminDrivers";
@@ -75,9 +81,18 @@ export default function App() {
         <Route path="overview" element={<DispatcherOverview />} />
         <Route path="deliveries" element={<DispatcherDashboard />} />
         <Route path="drivers" element={<DispatcherDrivers />} />
+        <Route path="drivers/manage" element={<DispatcherDriverManagement />} />
+
         <Route path="map" element={<DispatcherMap />} />
         <Route path="create" element={<CreateOrder />} />
         <Route path="reports" element={<DispatcherReports />} />
+
+        {/* existing */}
+        <Route path="profile" element={<DispatcherProfile />} />
+
+        {/* ✅ NEW: Settings route */}
+        <Route path="settings" element={<DispatcherSetting />} />
+        <Route path="notifications" element={<DispatcherNotifications />} />
       </Route>
 
       {/* Driver */}
@@ -94,6 +109,7 @@ export default function App() {
         <Route index element={<Navigate to="home" replace />} />
         <Route path="home" element={<DriverHome />} />
         <Route path="assigned" element={<DriverAssigned />} />
+        <Route path="history" element={<DriverHistory />} />
         <Route path="profile" element={<DriverProfile />} />
       </Route>
 

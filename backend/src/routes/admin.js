@@ -3,15 +3,24 @@ import { Router } from "express";
 import bcrypt from "bcryptjs";
 import { db } from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
+import { createNotification } from "../utils/notify.js";
 
 const router = Router();
 
 /**
- * Admin-only guard
+ * Admin / Dispatcher guard
+ *
+ * This project uses the "/admin" route namespace for "back-office" operations.
+ * In the FastPaSS app, Dispatchers are also allowed to manage drivers
+ * (create driver accounts, create driver profiles, update driver status).
+ *
+ * So we allow both ADMIN and DISPATCHER roles here.
  */
 function requireAdmin(req, res, next) {
   if (!req.user) return res.status(401).json({ message: "Unauthorized" });
-  if (req.user.role !== "ADMIN") return res.status(403).json({ message: "Forbidden" });
+  if (!["ADMIN", "DISPATCHER"].includes(req.user.role)) {
+    return res.status(403).json({ message: "Forbidden" });
+  }
   next();
 }
 
@@ -57,8 +66,23 @@ router.post("/users/driver", requireAuth, requireAdmin, async (req, res) => {
       `INSERT INTO users (name, email, password_hash, role)
        VALUES ($1,$2,$3,'DRIVER')
        RETURNING id, name, email, role, created_at`,
-      [name, email, password_hash]
+      [name, email, password_hash],
     );
+
+    // ✅ Notifications hook (driver user created)
+    try {
+      await createNotification({
+        type: "DRIVERS",
+        subtype: "DRIVER_USER_CREATED",
+        entity_id: created.rows[0].id,
+        title: "New Driver Account Created:",
+        message: `${created.rows[0].name} has just been added as a new driver account.`,
+        created_by: req.user.id,
+      });
+    } catch (e) {
+      // Never break core endpoint behavior if notifications fail
+      console.warn("createNotification DRIVER_USER_CREATED failed:", e?.message || e);
+    }
 
     return res.json(created.rows[0]);
   } catch (e) {
@@ -78,7 +102,7 @@ router.get("/driver-users", requireAuth, requireAdmin, async (req, res) => {
        FROM users u
        WHERE u.role='DRIVER'
          AND NOT EXISTS (SELECT 1 FROM drivers d WHERE d.user_id=u.id)
-       ORDER BY u.id DESC`
+       ORDER BY u.id DESC`,
     );
 
     return res.json({ rows: r.rows });
@@ -103,7 +127,7 @@ router.get("/drivers", requireAuth, requireAdmin, async (req, res) => {
           u.email
        FROM drivers d
        JOIN users u ON u.id = d.user_id
-       ORDER BY d.id ASC`
+       ORDER BY d.id ASC`,
     );
 
     return res.json({ rows: r.rows });
@@ -128,7 +152,7 @@ router.post("/drivers", requireAuth, requireAdmin, async (req, res) => {
     }
 
     // Ensure user exists and is DRIVER role
-    const u = await db.query(`SELECT id, role FROM users WHERE id=$1`, [user_id]);
+    const u = await db.query(`SELECT id, role, name FROM users WHERE id=$1`, [user_id]);
     if (!u.rows.length) return res.status(404).json({ message: "User not found" });
     if (u.rows[0].role !== "DRIVER") {
       return res.status(400).json({ message: "Selected user is not a DRIVER role" });
@@ -144,8 +168,23 @@ router.post("/drivers", requireAuth, requireAdmin, async (req, res) => {
       `INSERT INTO drivers (user_id, status)
        VALUES ($1,$2)
        RETURNING id AS driver_id, user_id, status`,
-      [user_id, status]
+      [user_id, status],
     );
+
+    // ✅ Notifications hook (driver profile created)
+    try {
+      const name = u.rows?.[0]?.name || `Driver #${created.rows[0].driver_id}`;
+      await createNotification({
+        type: "DRIVERS",
+        subtype: "DRIVER_PROFILE_CREATED",
+        entity_id: created.rows[0].driver_id,
+        title: "Driver Profile Created:",
+        message: `${name} is now active in the Drivers list.`,
+        created_by: req.user.id,
+      });
+    } catch (e) {
+      console.warn("createNotification DRIVER_PROFILE_CREATED failed:", e?.message || e);
+    }
 
     return res.json(created.rows[0]);
   } catch (e) {
@@ -171,7 +210,7 @@ router.patch("/drivers/:id", requireAuth, requireAdmin, async (req, res) => {
        SET status=$1
        WHERE id=$2
        RETURNING id AS driver_id, user_id, status`,
-      [status, driverId]
+      [status, driverId],
     );
 
     if (!r.rows.length) return res.status(404).json({ message: "Driver not found" });

@@ -63,30 +63,49 @@ export default function DeliveryMapInline({ referenceNo, onClose }) {
   const [err, setErr] = useState("");
   const [payload, setPayload] = useState(null);
 
+  // ✅ Live refresh while the preview is open (frontend only)
   useEffect(() => {
     if (!referenceNo) return;
 
     let alive = true;
+    let timer = null;
 
-    (async () => {
-      setLoading(true);
-      setErr("");
+    const fetchTrack = async (silent = false) => {
+      if (!silent) {
+        setLoading(true);
+        setErr("");
+      }
       try {
-        const { data } = await api.get("/deliveries/track", { params: { ref: referenceNo } });
+        const { data } = await api.get("/deliveries/track", {
+          params: { ref: referenceNo },
+        });
         if (!alive) return;
         setPayload(data || null);
+        if (!silent) setErr("");
       } catch (e) {
         if (!alive) return;
-        setErr(e?.response?.data?.message || "Failed to load map");
-        setPayload(null);
+        // Avoid spamming alerts during polling; show error only on the initial load.
+        if (!silent) {
+          setErr(e?.response?.data?.message || "Failed to load map");
+          setPayload(null);
+        }
       } finally {
         if (!alive) return;
-        setLoading(false);
+        if (!silent) setLoading(false);
       }
-    })();
+    };
+
+    // Initial load (shows loading state)
+    fetchTrack(false);
+
+    // Poll while open (every 5s)
+    timer = setInterval(() => {
+      if (document.visibilityState === "visible") fetchTrack(true);
+    }, 5000);
 
     return () => {
       alive = false;
+      if (timer) clearInterval(timer);
     };
   }, [referenceNo]);
 
@@ -99,9 +118,17 @@ export default function DeliveryMapInline({ referenceNo, onClose }) {
     const pts = [];
     if (pickup?.lat && pickup?.lng) pts.push([pickup.lat, pickup.lng]);
     if (dropoff?.lat && dropoff?.lng) pts.push([dropoff.lat, dropoff.lng]);
-    if (driverLoc?.lat && driverLoc?.lng) pts.push([Number(driverLoc.lat), Number(driverLoc.lng)]);
+    if (driverLoc?.lat && driverLoc?.lng)
+      pts.push([Number(driverLoc.lat), Number(driverLoc.lng)]);
     return pts;
-  }, [pickup?.lat, pickup?.lng, dropoff?.lat, dropoff?.lng, driverLoc?.lat, driverLoc?.lng]);
+  }, [
+    pickup?.lat,
+    pickup?.lng,
+    dropoff?.lat,
+    dropoff?.lng,
+    driverLoc?.lat,
+    driverLoc?.lng,
+  ]);
 
   const hasMap = pointsToFit.length > 0;
 
@@ -111,7 +138,9 @@ export default function DeliveryMapInline({ referenceNo, onClose }) {
         <div className="fp-miniMapTitle">
           <Icon name="map" />
           Live Map Preview
-          <span className="fp-pill" style={{ marginLeft: 8 }}>{referenceNo}</span>
+          <span className="fp-pill" style={{ marginLeft: 8 }}>
+            {referenceNo}
+          </span>
         </div>
         <button className="fp-btn2" onClick={onClose}>
           <Icon name="close" />
@@ -121,16 +150,27 @@ export default function DeliveryMapInline({ referenceNo, onClose }) {
 
       <div className="fp-miniMapBody">
         {loading ? (
-          <div className="fp-muted" style={{ padding: 12 }}>Loading map…</div>
+          <div className="fp-muted" style={{ padding: 12 }}>
+            Loading map…
+          </div>
         ) : err ? (
           <div className="fp-alert" style={{ margin: 12 }}>
-            <span className="fp-alertIcon" aria-hidden="true"><Icon name="alert" /></span>
+            <span className="fp-alertIcon" aria-hidden="true">
+              <Icon name="alert" />
+            </span>
             <div>{err}</div>
           </div>
         ) : !hasMap ? (
-          <div className="fp-muted" style={{ padding: 12 }}>No coordinates available yet for this delivery.</div>
+          <div className="fp-muted" style={{ padding: 12 }}>
+            No coordinates available yet for this delivery.
+          </div>
         ) : (
-          <MapContainer center={pointsToFit[0]} zoom={13} scrollWheelZoom style={{ height: "100%", width: "100%" }}>
+          <MapContainer
+            center={pointsToFit[0]}
+            zoom={13}
+            scrollWheelZoom
+            style={{ height: "100%", width: "100%" }}
+          >
             <TileLayer
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -138,22 +178,31 @@ export default function DeliveryMapInline({ referenceNo, onClose }) {
 
             <FitToPoints points={pointsToFit} fitKey={referenceNo} />
 
-            {Array.isArray(route) && route.length >= 2 ? <Polyline positions={route} /> : null}
+            {Array.isArray(route) && route.length >= 2 ? (
+              <Polyline positions={route} />
+            ) : null}
 
             {pickup?.lat && pickup?.lng ? (
               <Marker position={[pickup.lat, pickup.lng]} icon={pickupIcon}>
-                <Tooltip direction="top" offset={[0, -10]} opacity={1}>Pickup</Tooltip>
+                <Tooltip direction="top" offset={[0, -10]} opacity={1}>
+                  Pickup
+                </Tooltip>
               </Marker>
             ) : null}
 
             {dropoff?.lat && dropoff?.lng ? (
               <Marker position={[dropoff.lat, dropoff.lng]} icon={dropoffIcon}>
-                <Tooltip direction="top" offset={[0, -10]} opacity={1}>Dropoff</Tooltip>
+                <Tooltip direction="top" offset={[0, -10]} opacity={1}>
+                  Dropoff
+                </Tooltip>
               </Marker>
             ) : null}
 
             {driverLoc?.lat && driverLoc?.lng ? (
-              <Marker position={[Number(driverLoc.lat), Number(driverLoc.lng)]} icon={driverIcon}>
+              <Marker
+                position={[Number(driverLoc.lat), Number(driverLoc.lng)]}
+                icon={driverIcon}
+              >
                 <Tooltip direction="top" offset={[0, -10]} opacity={1}>
                   Driver {payload?.driver?.name ? `(${payload.driver.name})` : ""}
                   <div style={{ marginTop: 4, fontSize: 12, opacity: 0.85 }}>
@@ -169,18 +218,25 @@ export default function DeliveryMapInline({ referenceNo, onClose }) {
       <div className="fp-miniMapMeta">
         <div className="fp-miniMapMetaRow">
           <div className="fp-miniMapMetaKey">Pickup</div>
-          <div className="fp-miniMapMetaVal">{payload?.delivery?.pickup_address || "—"}</div>
+          <div className="fp-miniMapMetaVal">
+            {payload?.delivery?.pickup_address || "—"}
+          </div>
         </div>
         <div className="fp-miniMapMetaRow">
           <div className="fp-miniMapMetaKey">Dropoff</div>
-          <div className="fp-miniMapMetaVal">{payload?.delivery?.dropoff_address || "—"}</div>
+          <div className="fp-miniMapMetaVal">
+            {payload?.delivery?.dropoff_address || "—"}
+          </div>
         </div>
         <div className="fp-miniMapMetaRow">
           <div className="fp-miniMapMetaKey">Driver</div>
           <div className="fp-miniMapMetaVal">
             {payload?.driver?.name || "—"}
             <div className="fp-muted fp-mt-xs">
-              Last GPS: {payload?.driver_location?.updated_at ? fmt(payload.driver_location.updated_at) : "—"}
+              Last GPS:{" "}
+              {payload?.driver_location?.updated_at
+                ? fmt(payload.driver_location.updated_at)
+                : "—"}
             </div>
           </div>
         </div>

@@ -3,6 +3,8 @@ import Icon from "./Icons";
 import { statusChipStyle } from "./statusChipStyle";
 import DeliveryMapInline from "./DeliveryMapInline";
 
+import "../../styles/dispatcher-delivery-card.css";
+
 export default function DeliveryCard({
   delivery: d,
   drivers,
@@ -43,28 +45,35 @@ export default function DeliveryCard({
   const [openMap, setOpenMap] = useState(false);
 
   return (
-    <div className={`fp-card ${selected ? "fp-cardSelected" : ""}`}>
-      <div className="fp-row">
-        <div className="fp-mainCol">
-          <div className="fp-titleRow">
-            {/* ✅ checkbox */}
-            <label className="fp-check" title="Select delivery">
+    <div className={`fp-card fpOvD-card ${selected ? "fp-cardSelected fpOvD-selected" : ""}`}>
+      {/* Main row */}
+      <div className="fp-row fpOvD-row">
+        {/* Left block */}
+        <div className="fp-mainCol fpOvD-left">
+          {/* Top line: checkbox + ref + name + status */}
+          <div className="fp-titleRow fpOvD-topLine">
+            <label className="fp-check fpOvD-check" title="Select delivery">
               <input type="checkbox" checked={!!selected} onChange={onToggleSelect} />
               <span className="fp-checkBox" aria-hidden="true" />
             </label>
 
-            <div className="fp-ref">{d.reference_no}</div>
-            <div className="fp-sep">—</div>
-            <div className="fp-name">{d.customer_name}</div>
+            <div className="fpOvD-refWrap">
+              <div className="fp-ref fpOvD-ref">{d.reference_no}</div>
+              <div className="fp-sep fpOvD-sep">—</div>
+              <div className="fp-name fpOvD-name">{d.customer_name}</div>
+            </div>
 
-            <span style={statusChipStyle(d.status)}>{d.status}</span>
+            <span className="fpOvD-status" style={statusChipStyle(d.status)}>
+              {d.status}
+            </span>
           </div>
 
-          <div className="fp-muted fp-mt-sm">
+          {/* Middle: address + assigned */}
+          <div className="fp-muted fp-mt-sm fpOvD-address">
             {d.pickup_address} → {d.dropoff_address}
           </div>
 
-          <div className="fp-muted fp-mt-md">
+          <div className="fp-muted fp-mt-md fpOvD-assigned">
             {d.assigned_driver_id ? (
               <>
                 Assigned Driver ID: <b className="fp-strong">{d.assigned_driver_id}</b>
@@ -74,28 +83,29 @@ export default function DeliveryCard({
             )}
           </div>
 
-          <div className="fp-actionRow">
-            <button className="fp-btn2" onClick={() => setOpenMap((v) => !v)}>
+          {/* Bottom-left: small action pills */}
+          <div className="fp-actionRow fpOvD-actions">
+            <button className="fp-btn2 fpOvD-pill" onClick={() => setOpenMap((v) => !v)}>
               <Icon name="map" />
               {openMap ? "Hide Map" : "View Map"}
             </button>
 
-            <button className="fp-btn2" onClick={toggleTimeline}>
+            <button className="fp-btn2 fpOvD-pill" onClick={toggleTimeline}>
               {openTimeline ? "Hide Timeline" : "View Timeline"}
             </button>
 
-            <button className="fp-btn2" onClick={togglePod}>
+            <button className="fp-btn2 fpOvD-pill" onClick={togglePod}>
               {openPod ? "Hide POD" : "View POD"}
             </button>
 
             {d.status === "FAILED" ? (
-              <button className="fp-btn2 fp-btn2-danger" onClick={toggleFailure}>
+              <button className="fp-btn2 fpOvD-pill fpOvD-pillDanger" onClick={toggleFailure}>
                 {openFailure ? "Hide Failure" : "View Failure"}
               </button>
             ) : null}
 
             <button
-              className="fp-btn2 fp-btn2-danger"
+              className="fp-btn2 fpOvD-pill fpOvD-pillDanger"
               disabled={disableDelete}
               onClick={onDelete}
               title={deleteLocked ? "Delivered orders cannot be deleted" : "Delete this order"}
@@ -104,14 +114,15 @@ export default function DeliveryCard({
             </button>
 
             {(loadingEventsId === d.id || loadingPodId === d.id || loadingFailureId === d.id) && (
-              <span className="fp-muted">Loading…</span>
+              <span className="fp-muted fpOvD-loading">Loading…</span>
             )}
           </div>
         </div>
 
-        <div className="fp-rightCol">
+        {/* Right block: driver select + assign + created */}
+        <div className="fp-rightCol fpOvD-right">
           <select
-            className="fp-select"
+            className="fp-select fpOvD-select"
             value={driverPickValue || ""}
             onChange={(e) => onPickDriver(e.target.value)}
             disabled={assignmentLocked}
@@ -124,7 +135,7 @@ export default function DeliveryCard({
             ))}
           </select>
 
-          <button className="fp-btn2 fp-btn2-primary" disabled={disableAssign} onClick={onAssign}>
+          <button className="fp-btn2 fp-btn2-primary fpOvD-assign" disabled={disableAssign} onClick={onAssign}>
             {assignmentLocked
               ? "Assignment locked"
               : assigningId === d.id
@@ -134,19 +145,21 @@ export default function DeliveryCard({
               : "Assign Driver"}
           </button>
 
-          <div className="fp-muted fp-mt-sm">Created: {fmt(d.created_at)}</div>
+          <div className="fp-muted fp-mt-sm fpOvD-created">Created {fmt(d.created_at)}</div>
         </div>
       </div>
 
+      {/* Inline map */}
       {openMap ? (
-        <div className="fp-section">
+        <div className="fp-section fpOvD-expand">
           <DeliveryMapInline referenceNo={d.reference_no} onClose={() => setOpenMap(false)} />
         </div>
       ) : null}
 
+      {/* Timeline */}
       {openTimeline ? (
-        <div className="fp-section">
-          <div className="fp-sectionTitle">
+        <div className="fp-section fpOvD-expand">
+          <div className="fp-sectionTitle fpOvD-sectionTitle">
             <span className="fp-sectionIcon" aria-hidden="true">
               <Icon name="route" size={16} />
             </span>
@@ -169,9 +182,10 @@ export default function DeliveryCard({
         </div>
       ) : null}
 
+      {/* POD */}
       {openPod ? (
-        <div className="fp-section">
-          <div className="fp-sectionTitle">Proof of Delivery</div>
+        <div className="fp-section fpOvD-expand">
+          <div className="fp-sectionTitle fpOvD-sectionTitle">Proof of Delivery</div>
 
           {pod === undefined ? (
             <div className="fp-muted">Loading POD…</div>
@@ -200,9 +214,10 @@ export default function DeliveryCard({
         </div>
       ) : null}
 
+      {/* Failure */}
       {openFailure ? (
-        <div className="fp-section">
-          <div className="fp-sectionTitle fp-sectionTitleDanger">Failed Delivery</div>
+        <div className="fp-section fpOvD-expand">
+          <div className="fp-sectionTitle fp-sectionTitleDanger fpOvD-sectionTitle">Failed Delivery</div>
           {failure === undefined ? (
             <div className="fp-muted">Loading failure details…</div>
           ) : failure === null ? (

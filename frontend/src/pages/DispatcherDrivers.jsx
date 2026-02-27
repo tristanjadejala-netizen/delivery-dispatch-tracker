@@ -1,278 +1,287 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import api from "../lib/api";
 
 import "../styles/fastpass-dashboard.css";
 import "leaflet/dist/leaflet.css";
 
-import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
-import L from "leaflet";
-
-import DriverLocationsTable from "../components/dispatcher/DriverLocationsTable";
 import Icon from "../components/dispatcher/Icons";
-
-/* ───────────────────────────────────────────── */
-/* Leaflet marker setup                          */
-/* ───────────────────────────────────────────── */
-
-function makeMarker(color) {
-  return new L.Icon({
-    iconUrl:
-      color === "red"
-        ? "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png"
-        : "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-blue.png",
-    shadowUrl:
-      "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png",
-    iconSize: [25, 41],
-    iconAnchor: [12, 41],
-    popupAnchor: [1, -34],
-    shadowSize: [41, 41],
-  });
-}
-
-const BLUE_MARKER = makeMarker("blue");
-const RED_MARKER = makeMarker("red");
-
-/* ───────────────────────────────────────────── */
-
-const STALE_MIN = 10;
-
-function fmt(iso) {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  return d.toLocaleString();
-}
-
-function minsSince(iso) {
-  if (!iso) return Infinity;
-  const t = new Date(iso).getTime();
-  if (Number.isNaN(t)) return Infinity;
-  return (Date.now() - t) / 60000;
-}
-
-function FitBounds({ points, focus }) {
-  const map = useMap();
-
-  useEffect(() => {
-    if (!map || !points.length) return;
-
-    if (focus) {
-      map.setView([focus.lat, focus.lng], 16, { animate: true });
-      return;
-    }
-
-    const bounds = L.latLngBounds(points.map((p) => [p.lat, p.lng]));
-    map.fitBounds(bounds, { padding: [30, 30] });
-  }, [map, points, focus]);
-
-  return null;
-}
-
-/* ───────────────────────────────────────────── */
+import SectionHeader from "../components/dispatcher/SectionHeader";
+import "../styles/dispatcher-drivers.css";
 
 export default function DispatcherDrivers() {
-  const [rows, setRows] = useState([]);
+  const nav = useNavigate();
+
+  // live GPS polling
+  const locPollRef = useRef(null);
+  const [driverLocations, setDriverLocations] = useState([]);
+  const [locUpdatedAt, setLocUpdatedAt] = useState(null);
+
+  const [drivers, setDrivers] = useState([]);
+  const [ordersAvailable, setOrdersAvailable] = useState(0);
+
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
-  const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
 
-  // Map focus target
-  const [focusedDriver, setFocusedDriver] = useState(null);
+  const STALE_MIN = 10;
 
-  async function load() {
+  function minsSince(iso) {
+    if (!iso) return Infinity;
+    const t = new Date(iso).getTime();
+    if (Number.isNaN(t)) return Infinity;
+    return Math.floor((Date.now() - t) / 60000);
+  }
+
+  async function loadDrivers() {
+    const { data } = await api.get("/admin/drivers");
+    setDrivers(data.rows || []);
+  }
+
+  async function loadOrdersAvailableCount() {
+    try {
+      const { data } = await api.get("/deliveries", {
+        params: { status: "PENDING", q: "", limit: 1, offset: 0 },
+      });
+      setOrdersAvailable(data.total || 0);
+    } catch {
+      setOrdersAvailable(0);
+    }
+  }
+
+  async function loadDriverLocations(silent = false) {
+    if (!silent) setErr("");
+    try {
+      const { data } = await api.get("/deliveries/driver-locations");
+      setDriverLocations(data.rows || []);
+      setLocUpdatedAt(new Date().toISOString());
+    } catch (e) {
+      if (!silent) {
+        setErr(e?.response?.data?.message || "Failed to load driver locations");
+      }
+    }
+  }
+
+  async function refresh() {
     setLoading(true);
     setErr("");
     try {
-      const { data } = await api.get("/deliveries/driver-locations");
-      setRows(data.rows || []);
-      setLastUpdatedAt(new Date().toISOString());
+      await Promise.all([
+        loadDrivers(),
+        loadOrdersAvailableCount(),
+        loadDriverLocations(true),
+      ]);
     } catch (e) {
-      setErr(e?.response?.data?.message || "Failed to load driver locations");
+      setErr(e?.response?.data?.message || "Failed to refresh");
     } finally {
       setLoading(false);
     }
   }
 
   useEffect(() => {
-    load();
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const drivers = useMemo(() => {
-    return (rows || [])
-      .map((r) => {
-        const lat = Number(r.lat);
-        const lng = Number(r.lng);
-        if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  useEffect(() => {
+    if (locPollRef.current) clearInterval(locPollRef.current);
 
-        const stale = minsSince(r.updated_at) >= STALE_MIN;
+    locPollRef.current = setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      loadDriverLocations(true);
+    }, 5000);
 
-        return {
-          ...r,
-          lat,
-          lng,
-          id: r.driver_id ?? r.id,
-          name: r.name || `Driver #${r.driver_id ?? r.id}`,
-          status: r.status || "ACTIVE",
-          stale,
-        };
-      })
-      .filter(Boolean);
-  }, [rows]);
+    return () => {
+      if (locPollRef.current) clearInterval(locPollRef.current);
+      locPollRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const staleCount = drivers.filter((d) => d.stale).length;
+  const locByDriverId = useMemo(() => {
+    const map = new Map();
+    for (const r of driverLocations || []) {
+      const id = r.driver_id ?? r.id;
+      if (id == null) continue;
+      map.set(String(id), r);
+    }
+    return map;
+  }, [driverLocations]);
+
+  const stats = useMemo(() => {
+    const rows = drivers || [];
+    const total = rows.length;
+    const active = rows.filter(
+      (d) => String(d.status || "").toUpperCase() === "AVAILABLE",
+    ).length;
+    const busy = rows.filter(
+      (d) => String(d.status || "").toUpperCase() === "BUSY",
+    ).length;
+    const offline = total - active - busy;
+
+    const stale = rows.filter((d) => {
+      const loc = locByDriverId.get(String(d.driver_id));
+      const mins = minsSince(loc?.updated_at);
+      const hasLoc = loc?.lat != null && loc?.lng != null;
+      return hasLoc && mins >= STALE_MIN;
+    }).length;
+
+    return { total, active, busy, offline, stale };
+  }, [drivers, locByDriverId]);
+
+  const activeDrivers = useMemo(() => {
+    return (drivers || []).filter(
+      (d) => String(d.status || "").toUpperCase() === "AVAILABLE",
+    );
+  }, [drivers]);
 
   return (
-    <>
-      {/* Header */}
-      <div className="fp-header" style={{ marginTop: 0 }}>
-        <div>
-          <h1 className="fp-title">
-            <span className="fp-titleIcon">
-              <Icon name="gps" size={18} />
+    <div className="fpOv-page">
+      <div className="fpOv-mainCard">
+        <SectionHeader
+          title="Drivers"
+          subtitle="Monitor live GPS and driver availability. Use Driver Management for edits."
+          right={
+            <div className="fpDrv-topActions">
+              <button
+                className="fp-btn fp-btn-ghost"
+                type="button"
+                onClick={() => nav("/dispatcher/drivers/manage")}
+              >
+                <Icon name="settings" />
+                Driver Management
+              </button>
+
+              <button
+                className="fp-btn fp-btn-solid"
+                type="button"
+                onClick={refresh}
+                disabled={loading}
+              >
+                <Icon name="refresh" />
+                {loading ? "Refreshing…" : "Refresh"}
+              </button>
+            </div>
+          }
+        />
+
+        {err ? (
+          <div className="fp-alert fpDrv-alert" role="alert" aria-live="polite">
+            <span className="fp-alertIcon" aria-hidden="true">
+              <Icon name="alert" />
             </span>
-            Drivers
-          </h1>
-          <div className="fp-sub">
-            Last known GPS updates from drivers.
-            {lastUpdatedAt && (
-              <span className="fp-subMeta">
-                <span className="fp-subDot" />
-                Updated:{" "}
-                <b>
-                  {new Date(lastUpdatedAt).toLocaleTimeString([], {
+            <div>{err}</div>
+          </div>
+        ) : null}
+
+        {/* KPI Row */}
+        <div className="fpDrv-kpiRow">
+          <button
+            className="fpDrv-kpiCard fpDrv-kpiCard--orders"
+            type="button"
+            onClick={() =>
+              nav("/dispatcher/deliveries", { state: { tab: "UNASSIGNED" } })
+            }
+            title="Open pending deliveries"
+          >
+            <div className="fpDrv-kpiLabel">Orders Available</div>
+            <div className="fpDrv-kpiValue">{ordersAvailable}</div>
+            <div className="fpDrv-kpiHint">Pending orders waiting assignment</div>
+          </button>
+
+          <div className="fpDrv-kpiCard">
+            <div className="fpDrv-kpiLabel">Total Drivers</div>
+            <div className="fpDrv-kpiValue">{stats.total}</div>
+            <div className="fpDrv-kpiHint">All driver records</div>
+          </div>
+
+          <div className="fpDrv-kpiCard">
+            <div className="fpDrv-kpiLabel">Active</div>
+            <div className="fpDrv-kpiValue">{stats.active}</div>
+            <div className="fpDrv-kpiHint">Available now</div>
+          </div>
+
+          <div className="fpDrv-kpiCard">
+            <div className="fpDrv-kpiLabel">Stale GPS</div>
+            <div className="fpDrv-kpiValue">{stats.stale}</div>
+            <div className="fpDrv-kpiHint">Pins older than {STALE_MIN} mins</div>
+          </div>
+        </div>
+
+        {/* Clean 2-col overview (lightweight) */}
+        <div className="fpDrv-mainGrid fpDrv-mainGrid--clean fpDrv-mainGrid--single">
+          <div className="fpDrv-card fpDrv-card--wide">
+            <div className="fpDrv-cardHeader">
+              <div>
+                <div className="fpDrv-cardTitle">Active Drivers</div>
+                <div className="fp-muted fp-mt-xs">
+                  Quick snapshot of drivers currently available.
+                </div>
+              </div>
+
+              <button
+                className="fp-btn fp-btn-ghost"
+                type="button"
+                onClick={() => nav("/dispatcher/map")}
+              >
+                <Icon name="map" />
+                Open Map
+              </button>
+            </div>
+
+            <div className="fpDrv-miniList fpDrv-miniList--wide">
+              {activeDrivers.slice(0, 20).map((d) => (
+                <div className="fpDrv-miniRow fpDrv-miniRow--wide" key={d.driver_id}>
+                  <div className="fpDrv-avatar">
+                    {(d.name || "D").slice(0, 1).toUpperCase()}
+                  </div>
+
+                  <div className="fpDrv-miniMain">
+                    <div className="fpDrv-miniName">
+                      {d.name || `Driver #${d.driver_id}`}
+                    </div>
+                    <div className="fpDrv-miniHelp">{d.email || "—"}</div>
+                  </div>
+
+                  <span className="fp-pill fp-pill-ok">Active</span>
+
+                  <button
+                    className="fpDrv-mapPremiumBtn"
+                    type="button"
+                    onClick={() =>
+                      nav("/dispatcher/map", {
+                        state: { focusDriverId: d.driver_id },
+                      })
+                    }
+                    title="Center map on this driver"
+                  >
+                    <span className="fpDrv-mapPremiumInner">
+                      <Icon name="map" size={14} />
+                      <span>Live Map</span>
+                    </span>
+                  </button>
+                </div>
+              ))}
+
+              {activeDrivers.length === 0 ? (
+                <div className="fpDrv-miniEmpty">No active drivers right now.</div>
+              ) : null}
+            </div>
+
+            <div className="fpDrv-footerMeta">
+              Active: <b>{stats.active}</b> • Busy: <b>{stats.busy}</b> • Offline: <b>{stats.offline}</b>
+              {locUpdatedAt ? (
+                <span className="fpDrv-gpsStamp">
+                  • GPS updated{" "}
+                  {new Date(locUpdatedAt).toLocaleTimeString([], {
                     hour: "2-digit",
                     minute: "2-digit",
                   })}
-                </b>
-              </span>
-            )}
-          </div>
-        </div>
-
-        <div className="fp-actions">
-          <button
-            className="fp-btn fp-btn-solid"
-            onClick={load}
-            disabled={loading}
-          >
-            <Icon name="refresh" />
-            Refresh
-          </button>
-        </div>
-      </div>
-
-      {err && (
-        <div className="fp-alert" role="alert">
-          <Icon name="alert" />
-          <div>{err}</div>
-        </div>
-      )}
-
-      {/* Health check */}
-      <div className="fp-surface" style={{ marginTop: 14 }}>
-        <div className="fp-surfaceHeader">
-          <div>
-            <div className="fp-surfaceTitle">
-              <Icon name="shield" /> Health check
-            </div>
-            <div className="fp-muted fp-mt-xs">
-              Stale GPS means no update for {STALE_MIN} minutes.
+                </span>
+              ) : null}
             </div>
           </div>
-
-          <div style={{ display: "flex", gap: 10 }}>
-            <span className={staleCount ? "fp-pill fp-pill-warn" : "fp-pill"}>
-              Stale GPS: <b>{staleCount}</b>
-            </span>
-            <span className="fp-pill fp-pill-info">
-              Threshold: {STALE_MIN}m
-            </span>
-          </div>
         </div>
       </div>
-
-      {/* Map */}
-      <div className="fp-surface" style={{ marginTop: 14 }}>
-        <div className="fp-surfaceHeader">
-          <div className="fp-surfaceTitle">
-            <Icon name="map" /> Driver Locations
-          </div>
-        </div>
-
-        <div
-          style={{
-            height: 420,
-            borderRadius: 16,
-            overflow: "hidden",
-            border: "1px solid rgba(0,0,0,.06)",
-          }}
-        >
-          <MapContainer
-            center={[14.5995, 120.9842]}
-            zoom={12}
-            style={{ height: "100%" }}
-          >
-            <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-            <FitBounds points={drivers} focus={focusedDriver} />
-
-            {drivers.map((d) => (
-              <Marker
-                key={d.id}
-                position={[d.lat, d.lng]}
-                icon={d.stale ? RED_MARKER : BLUE_MARKER}
-                eventHandlers={{
-                  click: () => setFocusedDriver(d),
-                }}
-              >
-                {d.stale && <div className="stale-marker" />}
-
-                <Popup>
-                  <div style={{ minWidth: 200 }}>
-                    <div style={{ fontWeight: 900 }}>{d.name}</div>
-
-                    <div
-                      style={{
-                        marginTop: 6,
-                        display: "flex",
-                        gap: 6,
-                        flexWrap: "wrap",
-                      }}
-                    >
-                      <span className="fp-pill fp-pill-info">{d.status}</span>
-                      {d.stale &&
-                        (!focusedDriver || focusedDriver.id !== d.id) && (
-                          <div className="stale-marker" />
-                        )}
-                    </div>
-
-                    <div
-                      className="fp-muted"
-                      style={{ marginTop: 8, fontSize: 12 }}
-                    >
-                      Updated: <b>{fmt(d.updated_at)}</b>
-                    </div>
-                  </div>
-                </Popup>
-              </Marker>
-            ))}
-          </MapContainer>
-        </div>
-      </div>
-
-      {/* Table (click row → focus map) */}
-      <DriverLocationsTable
-        rows={rows}
-        fmt={fmt}
-        onRowClick={(row) => {
-          const lat = Number(row.lat);
-          const lng = Number(row.lng);
-          if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
-          setFocusedDriver({
-            lat,
-            lng,
-            id: row.driver_id ?? row.id,
-          });
-        }}
-      />
-    </>
+    </div>
   );
 }

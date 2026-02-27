@@ -58,7 +58,6 @@ export default function Login() {
       overflow: "hidden",
     },
 
-    // Soft abstract circles (top-left) like the reference.
     bgDecor: {
       position: "absolute",
       inset: 0,
@@ -77,16 +76,19 @@ export default function Login() {
       padding: 24,
     },
 
+    // ✅ Key fix: minmax(0,...) so BOTH columns can shrink,
+    // plus a bigger "gap" so right card never sits on top of the left white area.
     shell: {
       width: "100%",
       maxWidth: 1200,
       display: "grid",
-      gridTemplateColumns: "1.15fr 0.85fr",
-      gap: 28,
+      gridTemplateColumns: "minmax(0, 1.15fr) minmax(0, 0.85fr)",
+      gap: 56, // ✅ give breathing room so it won't override left side
       alignItems: "center",
     },
 
     left: {
+      minWidth: 0,
       display: "grid",
       alignContent: "center",
       justifyItems: "start",
@@ -102,14 +104,20 @@ export default function Login() {
 
     illustration: {
       width: "min(1000px, 100%)",
-      marginLeft: "-60px",
+      marginLeft: 0,
       height: "auto",
       objectFit: "contain",
+      maxWidth: "100%",
+      display: "block",
     },
 
+    // ✅ Key fix: keep the card inside its column and push it right a bit
     rightWrap: {
+      minWidth: 0,
       display: "grid",
-      placeItems: "center",
+      justifyItems: "end", // ✅ card aligns to the right edge of its grid column
+      alignItems: "center",
+      paddingLeft: 32, // ✅ extra push right so it won't intrude into left area
     },
 
     card: {
@@ -121,6 +129,8 @@ export default function Login() {
       boxShadow: "0 30px 70px rgba(17,24,39,0.10)",
       padding: 44,
       position: "relative",
+      overflow: "hidden",
+      boxSizing: "border-box",
     },
 
     title: {
@@ -129,15 +139,11 @@ export default function Login() {
       lineHeight: 1,
       letterSpacing: -1.2,
       fontWeight: 950,
+      wordBreak: "break-word",
     },
 
-    titleAccent: {
-      color: "#c2410c",
-    },
-
-    titleMain: {
-      color: "#111827",
-    },
+    titleAccent: { color: "#c2410c" },
+    titleMain: { color: "#111827" },
 
     subtitle: {
       margin: "14px 0 18px 0",
@@ -164,9 +170,7 @@ export default function Login() {
 
     field: { display: "grid", gap: 8 },
 
-    inputWrap: {
-      position: "relative",
-    },
+    inputWrap: { position: "relative" },
 
     iconLeft: {
       position: "absolute",
@@ -182,15 +186,16 @@ export default function Login() {
     input: {
       height: 54,
       width: "100%",
-      borderRadius: 6,
+      borderRadius: 10,
       border: "1px solid rgba(17,24,39,0.14)",
-      background: "rgba(255,255,255,0.88)",
+      background: "#ffffff",
       padding: "0 48px 0 46px",
       outline: "none",
       fontSize: 15,
       color: "#111827",
       boxShadow: "0 1px 0 rgba(17,24,39,0.04)",
       transition: "box-shadow 160ms ease, border-color 160ms ease",
+      boxSizing: "border-box",
     },
 
     eyeBtn: {
@@ -221,7 +226,7 @@ export default function Login() {
     submit: (disabled) => ({
       height: 54,
       width: "100%",
-      borderRadius: 6,
+      borderRadius: 10,
       border: 0,
       background: "#ff9d73",
       color: "#fff",
@@ -243,10 +248,7 @@ export default function Login() {
       fontWeight: 700,
     },
 
-    dividerLine: {
-      height: 1,
-      background: "rgba(17,24,39,0.14)",
-    },
+    dividerLine: { height: 1, background: "rgba(17,24,39,0.14)" },
 
     bottomRow: {
       marginTop: 10,
@@ -256,6 +258,8 @@ export default function Login() {
       alignItems: "center",
       fontSize: 13,
       color: "rgba(17,24,39,0.60)",
+      flexWrap: "wrap",
+      textAlign: "center",
     },
 
     bottomLink: {
@@ -292,43 +296,67 @@ export default function Login() {
 
       <div style={styles.content}>
         <style>{`
+          html, body { overflow-x: hidden; }
+          .fpLg-shell > * { min-width: 0; }
+
+          .fpLg-input:-webkit-autofill,
+          .fpLg-input:-webkit-autofill:hover,
+          .fpLg-input:-webkit-autofill:focus {
+            -webkit-text-fill-color: #111827 !important;
+            box-shadow: 0 0 0 1000px #ffffff inset !important;
+            transition: background-color 9999s ease-out 0s;
+            border-color: rgba(17,24,39,0.14) !important;
+          }
+
+          @media (max-width: 1120px) {
+            .fpLg-shell { gap: 22px !important; } /* still safe but tighter */
+            .fpLg-left { padding-left: 14px !important; }
+            .fpLg-illu { max-width: 100% !important; }
+          }
+
+          /* ✅ On smaller widths: stack vertically so nothing can overlap */
           @media (max-width: 980px) {
-            .fp-shell { grid-template-columns: 1fr !important; gap: 18px !important; }
-            .fp-card { padding: 30px !important; }
-            .fp-title { font-size: 44px !important; }
+            .fpLg-shell { grid-template-columns: 1fr !important; gap: 18px !important; }
+            .fpLg-card { padding: 30px !important; }
+            .fpLg-title { font-size: 44px !important; }
+            .fpLg-left { padding: 0 !important; justify-items: center !important; text-align: center !important; }
+            .fpLg-left img { margin-left: 0 !important; }
+            .fpLg-right { padding-left: 0 !important; justify-items: center !important; }
           }
+
           @media (max-width: 520px) {
-            .fp-card { padding: 22px !important; border-radius: 22px !important; }
-            .fp-title { font-size: 38px !important; }
+            .fpLg-card { padding: 22px !important; border-radius: 22px !important; }
+            .fpLg-title { font-size: 38px !important; }
           }
-          .fp-input:focus {
+
+          .fpLg-input:focus {
             border-color: rgba(255, 141, 96, 0.65) !important;
             box-shadow: 0 0 0 4px rgba(255, 141, 96, 0.22) !important;
-            background: rgba(255,255,255,0.95) !important;
+            background: #ffffff !important;
           }
-          .fp-btn:active { transform: translateY(1px); }
-          /* Make the existing GoogleSignInButton look like the reference */
-          .fp-card :is(button, a)[data-google-btn],
-          .fp-card .google-signin-btn,
-          .fp-card button.google-signin {
+
+          .fpLg-btn:active { transform: translateY(1px); }
+
+          .fpLg-card :is(button, a)[data-google-btn],
+          .fpLg-card .google-signin-btn,
+          .fpLg-card button.google-signin {
             height: 54px;
-            border-radius: 6px;
+            border-radius: 10px;
             width: 100%;
           }
         `}</style>
 
-        <div className="fp-shell" style={styles.shell}>
+        <div className="fpLg-shell" style={styles.shell}>
           {/* Left: Brand/Illustration */}
-          <div style={styles.left}>
+          <div className="fpLg-left" style={styles.left}>
             <img
               src="/fastpass-logo.png"
               alt="FastPass"
               style={styles.brandLogo}
               loading="eager"
             />
-
-            {/* If your project has a dedicated illustration, swap splash.png to it. */}
             <img
+              className="fpLg-illu"
               src={splashBg}
               alt="FastPass delivery illustration"
               style={styles.illustration}
@@ -337,9 +365,9 @@ export default function Login() {
           </div>
 
           {/* Right: Login card */}
-          <div style={styles.rightWrap}>
-            <div className="fp-card" style={styles.card}>
-              <h1 className="fp-title" style={styles.title}>
+          <div className="fpLg-right" style={styles.rightWrap}>
+            <div className="fpLg-card" style={styles.card}>
+              <h1 className="fpLg-title" style={styles.title}>
                 <span style={styles.titleAccent}>Welcome</span>{" "}
                 <span style={styles.titleMain}>Back!</span>
               </h1>
@@ -369,7 +397,7 @@ export default function Login() {
                       <path d="m4 7 8 6 8-6" />
                     </svg>
                     <input
-                      className="fp-input"
+                      className="fpLg-input"
                       style={styles.input}
                       placeholder="Enter your email"
                       value={email}
@@ -398,7 +426,7 @@ export default function Login() {
                     </svg>
 
                     <input
-                      className="fp-input"
+                      className="fpLg-input"
                       style={styles.input}
                       placeholder="Enter your password"
                       type={showPw ? "text" : "password"}
@@ -461,7 +489,7 @@ export default function Login() {
                 {err ? <div style={styles.error}>{err}</div> : null}
 
                 <button
-                  className="fp-btn"
+                  className="fpLg-btn"
                   type="submit"
                   style={styles.submit(!canSubmit)}
                   disabled={!canSubmit}

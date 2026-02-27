@@ -1,0 +1,150 @@
+/* DeliveryCard enterprise restyle (match reference row/card look) */
+
+.fpOvD-card {
+  border-radius: 16px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  box-shadow: 0 10px 18px rgba(15, 23, 42, 0.06);
+  background: #fff;
+  overflow: hidden;
+}
+
+.fpOvD-row {
+  gap: 14px;
+  align-items: stretch;
+}
+
+.fpOvD-left {
+  padding-right: 8px;
+}
+
+.fpOvD-topLine {
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.fpOvD-check {
+  margin-right: 2px;
+}
+
+.fpOvD-refWrap {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.fpOvD-ref {
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.fpOvD-name {
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 520px;
+}
+
+.fpOvD-status {
+  border-radius: 999px !important;
+  padding: 6px 10px !important;
+  font-size: 12px !important;
+  font-weight: 800 !important;
+}
+
+.fpOvD-address {
+  line-height: 1.35;
+  color: #4b5563;
+}
+
+.fpOvD-assigned {
+  color: #6b7280;
+}
+
+.fpOvD-actions {
+  margin-top: 10px;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.fpOvD-pill {
+  border-radius: 999px;
+  padding: 8px 10px;
+  border: 1px solid rgba(15, 23, 42, 0.10);
+  background: #f3f4f6;
+  font-weight: 700;
+}
+
+.fpOvD-pill:hover {
+  background: #e5e7eb;
+}
+
+.fpOvD-pillDanger {
+  background: #fff7f7;
+  border-color: rgba(239, 68, 68, 0.25);
+}
+
+.fpOvD-pillDanger:hover {
+  background: #fee2e2;
+}
+
+.fpOvD-loading {
+  margin-left: 4px;
+}
+
+.fpOvD-right {
+  min-width: 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  justify-content: center;
+}
+
+.fpOvD-select {
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  background: #ffffff;
+  padding: 10px 12px;
+}
+
+.fpOvD-assign {
+  width: 100%;
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-weight: 800;
+}
+
+.fpOvD-created {
+  font-size: 12px;
+  color: #6b7280;
+  text-align: right;
+}
+
+.fpOvD-expand {
+  border-top: 1px solid rgba(15, 23, 42, 0.08);
+  background: #fafafa;
+}
+
+/* Responsive: stack right column under left on smaller widths */
+@media (max-width: 860px) {
+  .fpOvD-row {
+    flex-direction: column;
+  }
+
+  .fpOvD-right {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .fpOvD-created {
+    text-align: left;
+  }
+
+  .fpOvD-name {
+    max-width: 100%;
+  }
+}

@@ -2,6 +2,9 @@ import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../lib/api";
 
+import "../styles/fastpass-dashboard.css";
+import "../styles/fastpass-dispatcher-shell.css";
+
 // ✅ UI separated from logic (FastPass styling lives in CSS)
 import "../styles/fastpass-createorder.css";
 
@@ -83,8 +86,8 @@ export default function CreateOrder() {
   }
 
   return (
-    <div className="fp-page">
-      <div className="fp-container">
+    <div className="fpOv-page">
+      <div className="fpOv-mainCard">
         {/* Header */}
         <div className="fp-header">
           <div>

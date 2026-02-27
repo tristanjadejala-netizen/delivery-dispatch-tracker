@@ -1,5 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import api from "../lib/api";
+
+import {
+  submitDriverEmergency,
+  submitDriverFail,
+  submitDriverPOD,
+  updateDriverDeliveryStatus,
+} from "../api/driver";
+
+import SignatureModal from "../components/driver/SignatureModal";
+import PhotoCaptureModal from "../components/driver/PhotoCaptureModal";
+import EmergencyModal from "../components/driver/EmergencyModal";
 import "../styles/driver-home.css";
 
 // Map (Leaflet) — same approach as CustomerDashboard
@@ -237,6 +249,12 @@ function Modal({ open, title, children, onClose }) {
 }
 
 export default function DriverHome() {
+  const nav = useNavigate();
+  const [online, setOnline] = useState(() => {
+    const v = localStorage.getItem("driverOnline");
+    if (v === null) return true;
+    return v === "true";
+  });
   const [rows, setRows] = useState([]);
   const [eventsById, setEventsById] = useState({});
   const [loading, setLoading] = useState(false);
@@ -254,13 +272,23 @@ export default function DriverHome() {
   const [podRecipient, setPodRecipient] = useState("");
   const [podNote, setPodNote] = useState("");
   const [podPhoto, setPodPhoto] = useState(null);
-  const [podSig, setPodSig] = useState(null);
+  const [podSigDataUrl, setPodSigDataUrl] = useState("");
+  const [sigOpen, setSigOpen] = useState(false);
+  const [photoOpen, setPhotoOpen] = useState(false);
+
+  // Emergency
+  const [emOpen, setEmOpen] = useState(false);
+  const [emBusy, setEmBusy] = useState(false);
 
   // Fail modal
   const [failOpen, setFailOpen] = useState(false);
   const [failReason, setFailReason] = useState("CUSTOMER_UNAVAILABLE");
   const [failNotes, setFailNotes] = useState("");
   const [failPhoto, setFailPhoto] = useState(null);
+
+  useEffect(() => {
+    localStorage.setItem("driverOnline", String(online));
+  }, [online]);
 
   async function load() {
     setLoading(true);
@@ -359,12 +387,26 @@ export default function DriverHome() {
     setActioning(true);
     setErr("");
     try {
-      await api.post(`/driver/deliveries/${current.id}/status`, { status, note: note || null });
+      await updateDriverDeliveryStatus(current.id, { status, note: note || null });
       await Promise.all([load(), loadEvents(current.id)]);
     } catch (e) {
       setErr(e?.response?.data?.message || "Failed to update status");
     } finally {
       setActioning(false);
+    }
+  }
+
+  function dataUrlToFile(dataUrl, filename = "signature.png") {
+    try {
+      const [meta, b64] = String(dataUrl || "").split(",");
+      const mime = /data:(.*?);base64/.exec(meta)?.[1] || "image/png";
+      const bin = atob(b64 || "");
+      const len = bin.length;
+      const arr = new Uint8Array(len);
+      for (let i = 0; i < len; i++) arr[i] = bin.charCodeAt(i);
+      return new File([arr], filename, { type: mime });
+    } catch {
+      return null;
     }
   }
 
@@ -386,17 +428,19 @@ export default function DriverHome() {
       fd.append("recipient_name", podRecipient.trim());
       if (podNote.trim()) fd.append("note", podNote.trim());
       fd.append("photo", podPhoto);
-      if (podSig) fd.append("signature", podSig);
 
-      await api.post(`/driver/deliveries/${current.id}/pod`, fd, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
+      if (podSigDataUrl) {
+        const f = dataUrlToFile(podSigDataUrl, `signature_${current.id}.png`);
+        if (f) fd.append("signature", f);
+      }
+
+      await submitDriverPOD(current.id, fd);
 
       setPodOpen(false);
       setPodRecipient("");
       setPodNote("");
       setPodPhoto(null);
-      setPodSig(null);
+      setPodSigDataUrl("");
 
       await Promise.all([load(), loadEvents(current.id)]);
     } catch (e) {
@@ -416,9 +460,7 @@ export default function DriverHome() {
       if (failNotes.trim()) fd.append("notes", failNotes.trim());
       if (failPhoto) fd.append("photo", failPhoto);
 
-      await api.post(`/driver/deliveries/${current.id}/fail`, fd, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
+      await submitDriverFail(current.id, fd);
 
       setFailOpen(false);
       setFailNotes("");
@@ -432,234 +474,252 @@ export default function DriverHome() {
     }
   }
 
+  async function submitEmergency({ type, message }) {
+    if (!current?.id) return;
+    setEmBusy(true);
+    try {
+      await submitDriverEmergency(current.id, {
+        type,
+        message: message || null,
+        timestamp: new Date().toISOString(),
+      });
+    } finally {
+      setEmBusy(false);
+    }
+  }
+
   const storedStatus = normStatus(current?.status);
   const canPickedUp = storedStatus === "ASSIGNED";
   const canPOD = storedStatus === "IN_TRANSIT";
   const canFail = storedStatus === "IN_TRANSIT";
 
   return (
-    <div className="drvHome">
-      <div className="drvTop">
-        <div className="drvBrand">
-          <span className="drvBrandFast">Fast</span>
-          <span className="drvBrandPass">Pass</span>
-          <span className="drvBrandTag">Driver</span>
+    <div className="drvStack">
+      {/* Status Card */}
+      <section className="drvCard drvCardPad">
+        <div className="drvCardHeader">
+          <div>
+            <p className="drvTitle">Status</p>
+            <p className="drvSub">Go online to receive and work on assigned deliveries.</p>
+          </div>
+          <span className={`drvPill ${online ? "drvPill--online" : "drvPill--offline"}`}>{online ? "ONLINE" : "OFFLINE"}</span>
         </div>
-        <div className="drvTopActions">
-          <button type="button" className="fp-chipBtn" onClick={load} disabled={loading}>
+
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 12 }}>
+          <div className="drvToggle">
+            <button
+              type="button"
+              className={`drvSwitch ${online ? "isOn" : ""}`}
+              aria-label={online ? "Go offline" : "Go online"}
+              onClick={() => setOnline((v) => !v)}
+            />
+            <div className="drvToggleLabel">
+              <strong>{online ? "You’re online" : "You’re offline"}</strong>
+              <span>{online ? "Ready for missions" : "No assignments will show"}</span>
+            </div>
+          </div>
+
+          <button type="button" className="drvBtn drvBtn--ghost" onClick={load} disabled={loading}>
             {loading ? "Refreshing…" : "Refresh"}
           </button>
         </div>
-      </div>
+      </section>
 
       {err ? (
-        <div className="fp-alert fp-alert-danger">
-          <strong>Notice:</strong> {err}
+        <div className="drvCard drvCardPad" style={{ borderColor: "rgba(239,68,68,0.25)", background: "rgba(239,68,68,0.06)" }}>
+          <p className="drvTitle" style={{ color: "#991b1b" }}>Notice</p>
+          <p className="drvSub" style={{ color: "#7f1d1d" }}>{err}</p>
         </div>
       ) : null}
 
+      {/* Active Delivery Card */}
       {!current ? (
-        <div className="fp-card">
-          <div className="fp-cardTopbar" />
-          <div className="fp-cardBody">
-            <div className="drvEmptyTitle">No active delivery</div>
-            <div className="drvEmptySub">Once a dispatcher assigns a delivery to you, it will appear here.</div>
-          </div>
-        </div>
+        <section className="drvCard drvCardPad">
+          <p className="drvTitle">No active delivery</p>
+          <p className="drvSub">Once a dispatcher assigns a delivery to you, it will appear here.</p>
+        </section>
       ) : (
-        <div className="drvGrid">
-          {/* LEFT: Current delivery */}
-          <section className="fp-card">
-            <div className="fp-cardTopbar" />
-            <div className="fp-cardBody">
-              <div className="drvCardHead">
-                <div className="drvCardHeadLeft">
-                  <div className="drvIconBubble">
-                    <Icon name="box" />
-                  </div>
-                  <div>
-                    <div className="drvMeta">Current Delivery</div>
-                    <div className="drvRef">{safe(current.reference_no || current.referenceNumber || `#${current.id}`)}</div>
-                  </div>
-                </div>
-                <div className="drvCardHeadRight">
-                  {money != null ? <div className="drvMoney">₱{Number(money).toFixed(2)}</div> : null}
-                  <div className="drvPills">
-                    <PriorityBadge priority={current.delivery_priority || "NORMAL"} />
-                    <StatusBadge status={current.status} />
-                  </div>
-                </div>
+        <section className="drvCard drvCardPad">
+          <div className="drvCardHeader">
+            <div>
+              <p className="drvTitle">Active Delivery</p>
+              <p className="drvSub">REF: {safe(current.reference_no || current.referenceNumber || `#${current.id}`)}</p>
+            </div>
+            <div style={{ display: "grid", justifyItems: "end", gap: 6 }}>
+              {money != null ? <span className="drvPill">₱{Number(money).toFixed(2)}</span> : null}
+              <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}>
+                <PriorityBadge priority={current.delivery_priority || "NORMAL"} />
+                <StatusBadge status={current.status} />
               </div>
+            </div>
+          </div>
 
-              <div className="drvRoute">
-                <div className="drvRouteCol">
-                  <div className="drvMeta">Pickup</div>
-                  <div className="drvAddr">{safe(pickup)}</div>
-                </div>
-                <div className="drvRouteArrow">›</div>
-                <div className="drvRouteCol right">
-                  <div className="drvMeta">Drop-off</div>
-                  <div className="drvAddr">{safe(dropoff)}</div>
-                </div>
+          <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 1000, color: "#334155" }}>Pickup</div>
+              <div style={{ fontSize: 13, fontWeight: 950, color: "#0f172a" }}>{safe(pickup)}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 1000, color: "#334155" }}>Drop-off</div>
+              <div style={{ fontSize: 13, fontWeight: 950, color: "#0f172a" }}>{safe(dropoff)}</div>
+            </div>
+            <div style={{ display: "flex", gap: 12, justifyContent: "space-between" }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 11, fontWeight: 1000, color: "#334155" }}>Customer</div>
+                <div style={{ fontSize: 13, fontWeight: 950, color: "#0f172a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{safe(customerName)}</div>
               </div>
-
-              <div className="drvInfoGrid">
-                <div className="drvInfoItem">
-                  <div className="drvMeta">Customer</div>
-                  <div className="drvValue">{safe(customerName)}</div>
-                </div>
-                <div className="drvInfoItem right">
-                  <div className="drvMeta">Contact</div>
-                  <div className="drvValue">{safe(customerContact)}</div>
-                </div>
-                <div className="drvInfoItem">
-                  <div className="drvMeta">Delivery Date</div>
-                  <div className="drvValue">{current.delivery_date ? fmtDateTime(current.delivery_date) : "—"}</div>
-                </div>
-                <div className="drvInfoItem right">
-                  <div className="drvMeta">Last Update</div>
-                  <div className="drvValue">
-                    {eventsById[current.id]?.length
-                      ? fmtDateTime(eventsById[current.id][eventsById[current.id].length - 1]?.created_at)
-                      : "—"}
-                  </div>
-                </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 11, fontWeight: 1000, color: "#334155" }}>Contact</div>
+                <div style={{ fontSize: 13, fontWeight: 950, color: "#0f172a" }}>{safe(customerContact)}</div>
               </div>
+            </div>
 
-              <div className="drvActions">
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 2 }}>
+              <a
+                className="drvBtn drvBtn--primary"
+                href={customerContact ? `tel:${String(customerContact).trim()}` : undefined}
+                onClick={(e) => {
+                  if (!customerContact) e.preventDefault();
+                }}
+                aria-disabled={!customerContact}
+                style={{ textDecoration: "none" }}
+                title={customerContact ? "Call customer" : "Customer phone missing"}
+              >
+                Call
+              </a>
+
+              <button type="button" className="drvBtn drvBtn--danger" onClick={() => setEmOpen(true)} disabled={actioning}>
+                Emergency
+              </button>
+            </div>
+          </div>
+
+          <div style={{ marginTop: 14, display: "grid", gap: 10 }}>
+            <button
+              type="button"
+              className="drvBtn drvBtn--primary drvBtn--full"
+              disabled={!canPickedUp || actioning}
+              onClick={() => updateStatus("PICKED_UP", "Picked up")}
+              title={canPickedUp ? "Start delivery" : "Start is available only when status is ASSIGNED"}
+            >
+              {actioning ? "Working…" : "Start Delivery"}
+            </button>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <button
+                type="button"
+                className="drvBtn drvBtn--ghost"
+                onClick={() => {
+                  const o = encodeURIComponent(pickup || "");
+                  const d = encodeURIComponent(dropoff || "");
+                  if (!o || !d) return;
+                  window.open(`https://www.google.com/maps/dir/?api=1&origin=${o}&destination=${d}`, "_blank");
+                }}
+                disabled={!pickup || !dropoff}
+              >
+                Navigate
+              </button>
+              <button type="button" className="drvBtn" onClick={() => nav("/driver/assigned")}>
+                View Details
+              </button>
+            </div>
+
+            {/* Keep existing working actions accessible */}
+            <div className="drvActionBar" style={{ marginTop: 2 }}>
+              <div className="drvActionRow">
                 <button
                   type="button"
-                  className="fp-btnPrimary"
-                  disabled={!canPickedUp || actioning}
-                  onClick={() => updateStatus("PICKED_UP", "Picked up")}
-                  title={canPickedUp ? "Mark as picked up" : "Picked Up is available only when status is ASSIGNED"}
-                >
-                  Picked Up
-                </button>
-
-                <button
-                  type="button"
-                  className="fp-btnGhost"
+                  className="drvBtn drvBtn--primary"
                   disabled={!canPOD || actioning}
                   onClick={() => setPodOpen(true)}
                   title={canPOD ? "Submit proof of delivery" : "Delivered is available only when status is IN TRANSIT"}
                 >
                   Delivered (POD)
                 </button>
-
                 <button
                   type="button"
-                  className="fp-btnDanger"
+                  className="drvBtn drvBtn--danger"
                   disabled={!canFail || actioning}
                   onClick={() => setFailOpen(true)}
                   title={canFail ? "Mark as failed" : "Failed is available only when status is IN TRANSIT"}
                 >
                   Unsuccessful
                 </button>
-
-                <button
-                  type="button"
-                  className="fp-btnLink"
-                  onClick={() => {
-                    const o = encodeURIComponent(pickup || "");
-                    const d = encodeURIComponent(dropoff || "");
-                    if (!o || !d) return;
-                    window.open(`https://www.google.com/maps/dir/?api=1&origin=${o}&destination=${d}`, "_blank");
-                  }}
-                  disabled={!pickup || !dropoff}
-                >
-                  Open Directions
-                </button>
-              </div>
-
-              <div className="drvDivider" />
-
-              <div className="drvMetaRow">
-                <div className="drvMeta">Timeline</div>
-                <div className="drvMetaHint">Status updates are auto-timestamped.</div>
-              </div>
-              <Timeline events={eventsById[current.id] || []} />
-            </div>
-          </section>
-
-          {/* RIGHT: Map */}
-          <section className="fp-card">
-            <div className="fp-cardTopbar" />
-            <div className="fp-cardBody">
-              <div className="drvMapHead">
-                <div className="drvMapTitle">
-                  <span className="drvIconBubble small">
-                    <Icon name="pin" />
-                  </span>
-                  Route Map
-                </div>
-                <div className="drvMapSub">Pickup → Drop-off</div>
-              </div>
-
-              <div className="drvMap">
-                {trackLoading ? (
-                  <div className="drvMapEmpty">Loading map…</div>
-                ) : track?.pickup?.lat && track?.pickup?.lng && track?.dropoff?.lat && track?.dropoff?.lng ? (
-                  <div className="drvLeaflet">
-                    <MapContainer center={mapCenter} zoom={13} style={{ height: "100%", width: "100%" }}>
-                      <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-
-                      <FitBounds pickup={track.pickup} dropoff={track.dropoff} fitKey={fitKey} />
-
-                      {/* Pickup */}
-                      <Marker position={[track.pickup.lat, track.pickup.lng]} icon={pickupIcon}>
-                        <Tooltip direction="top" offset={[0, -10]} opacity={1} permanent>
-                          Pickup
-                        </Tooltip>
-                      </Marker>
-
-                      {/* Drop-off */}
-                      <Marker position={[track.dropoff.lat, track.dropoff.lng]} icon={dropoffIcon}>
-                        <Tooltip direction="top" offset={[0, -10]} opacity={1} permanent>
-                          Drop-off
-                        </Tooltip>
-                      </Marker>
-
-                      {/* Route */}
-                      {Array.isArray(track.route) && track.route.length >= 2 ? <Polyline positions={track.route} /> : null}
-                    </MapContainer>
-                  </div>
-                ) : (
-                  <div className="drvMapEmpty">Map preview needs both pickup and drop-off locations.</div>
-                )}
-              </div>
-
-              <div className="drvMapBtns">
-                <button
-                  type="button"
-                  className="fp-chipBtn"
-                  onClick={() => {
-                    if (!pickup) return;
-                    const q = encodeURIComponent(pickup);
-                    window.open(`https://www.google.com/maps/search/?api=1&query=${q}`, "_blank");
-                  }}
-                  disabled={!pickup}
-                >
-                  Open Pickup
-                </button>
-
-                <button
-                  type="button"
-                  className="fp-chipBtn fp-chipBtnCta"
-                  onClick={() => {
-                    if (!dropoff) return;
-                    const q = encodeURIComponent(dropoff);
-                    window.open(`https://www.google.com/maps/search/?api=1&query=${q}`, "_blank");
-                  }}
-                  disabled={!dropoff}
-                >
-                  Open Drop-off
-                </button>
               </div>
             </div>
-          </section>
-        </div>
+
+            <div style={{ marginTop: 10 }}>
+              <p className="drvTitle">Timeline</p>
+              <p className="drvSub">Status updates are auto-timestamped.</p>
+              <div style={{ marginTop: 10 }}>
+                <Timeline events={eventsById[current.id] || []} />
+              </div>
+            </div>
+          </div>
+        </section>
       )}
+
+      {/* Map Preview */}
+      <section className="drvStack">
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+          <p style={{ margin: "2px 2px", fontSize: 12, fontWeight: 1000, color: "#334155" }}>Map Preview</p>
+          <span className="drvPill">Pickup → Drop-off</span>
+        </div>
+        <div className="drvMapWrap">
+          <div className="drvMap">
+            {trackLoading ? (
+              <div style={{ padding: 14, fontSize: 12, color: "#64748b", fontWeight: 900 }}>Loading map…</div>
+            ) : track?.pickup?.lat && track?.pickup?.lng && track?.dropoff?.lat && track?.dropoff?.lng ? (
+              <MapContainer center={mapCenter} zoom={13} style={{ height: "100%", width: "100%" }}>
+                <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                <FitBounds pickup={track.pickup} dropoff={track.dropoff} fitKey={fitKey} />
+                <Marker position={[track.pickup.lat, track.pickup.lng]} icon={pickupIcon}>
+                  <Tooltip direction="top" offset={[0, -10]} opacity={1} permanent>
+                    Pickup
+                  </Tooltip>
+                </Marker>
+                <Marker position={[track.dropoff.lat, track.dropoff.lng]} icon={dropoffIcon}>
+                  <Tooltip direction="top" offset={[0, -10]} opacity={1} permanent>
+                    Drop-off
+                  </Tooltip>
+                </Marker>
+                {Array.isArray(track.route) && track.route.length >= 2 ? <Polyline positions={track.route} /> : null}
+              </MapContainer>
+            ) : (
+              <div style={{ padding: 14, fontSize: 12, color: "#64748b", fontWeight: 900 }}>
+                Map preview needs both pickup and drop-off locations.
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <button
+            type="button"
+            className="drvBtn drvBtn--ghost"
+            onClick={() => {
+              if (!pickup) return;
+              const q = encodeURIComponent(pickup);
+              window.open(`https://www.google.com/maps/search/?api=1&query=${q}`, "_blank");
+            }}
+            disabled={!pickup}
+          >
+            Open Pickup
+          </button>
+          <button
+            type="button"
+            className="drvBtn drvBtn--primary"
+            onClick={() => {
+              if (!dropoff) return;
+              const q = encodeURIComponent(dropoff);
+              window.open(`https://www.google.com/maps/search/?api=1&query=${q}`, "_blank");
+            }}
+            disabled={!dropoff}
+          >
+            Open Drop-off
+          </button>
+        </div>
+      </section>
 
       {/* POD Modal */}
       <Modal
@@ -693,22 +753,18 @@ export default function DriverHome() {
 
           <label className="fp-field">
             <span className="fp-fieldLabel">POD Photo (required)</span>
-            <input
-              className="fp-control fp-file"
-              type="file"
-              accept="image/*"
-              onChange={(e) => setPodPhoto(e.target.files?.[0] || null)}
-            />
+            <button type="button" className="drvBtn drvBtn--ghost drvBtn--full" onClick={() => setPhotoOpen(true)}>
+              {podPhoto ? "Retake Photo" : "Take Customer Photo"}
+            </button>
+            {podPhoto ? <p className="drvSub" style={{ marginTop: 8 }}>Photo captured: {podPhoto.name}</p> : null}
           </label>
 
           <label className="fp-field">
             <span className="fp-fieldLabel">Signature (optional)</span>
-            <input
-              className="fp-control fp-file"
-              type="file"
-              accept="image/*"
-              onChange={(e) => setPodSig(e.target.files?.[0] || null)}
-            />
+            <button type="button" className="drvBtn drvBtn--ghost drvBtn--full" onClick={() => setSigOpen(true)}>
+              {podSigDataUrl ? "Re-capture Signature" : "Capture Signature"}
+            </button>
+            {podSigDataUrl ? <p className="drvSub" style={{ marginTop: 8 }}>Signature captured ✔</p> : null}
           </label>
         </div>
 
@@ -774,6 +830,10 @@ export default function DriverHome() {
           </button>
         </div>
       </Modal>
+
+      <SignatureModal open={sigOpen} onClose={() => setSigOpen(false)} onSave={(d) => setPodSigDataUrl(d)} />
+      <PhotoCaptureModal open={photoOpen} onClose={() => setPhotoOpen(false)} onSave={(f) => setPodPhoto(f)} />
+      <EmergencyModal open={emOpen} onClose={() => setEmOpen(false)} onSubmit={submitEmergency} busy={emBusy} />
     </div>
   );
 }
