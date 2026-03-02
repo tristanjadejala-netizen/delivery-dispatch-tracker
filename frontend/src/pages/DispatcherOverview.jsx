@@ -10,7 +10,7 @@ import "../styles/dispatcher-overview.css";
 import DeliveryCard from "../components/dispatcher/DeliveryCard";
 import Icon from "../components/dispatcher/Icons";
 
-const API_BASE = "http://localhost:5000";
+const API_BASE = String(import.meta.env.VITE_API_BASE_URL || "http://localhost:5000").replace(/\/+$/, "");
 
 function fmt(iso) {
   if (!iso) return "—";

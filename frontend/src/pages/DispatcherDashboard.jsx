@@ -13,7 +13,7 @@ import DeliveryCard from "../components/dispatcher/DeliveryCard";
 import Icon from "../components/dispatcher/Icons";
 import SectionHeader from "../components/dispatcher/SectionHeader";
 
-const API_BASE = "http://localhost:5000";
+const API_BASE = String(import.meta.env.VITE_API_BASE_URL || "http://localhost:5000").replace(/\/+$/, "");
 const STATUS_TABS = ["ALL", "UNASSIGNED", "ACTIVE", "DELIVERED", "FAILED"];
 
 function fmt(iso) {
@@ -113,7 +113,7 @@ export default function DispatcherDashboard() {
     try {
       await Promise.all([loadDeliveries(tab), loadDrivers()]);
       setLastUpdatedAt(new Date().toISOString());
-    } catch (e) {
+    } catch (e) {x
       setErr(
         e?.response?.data?.error ||
           e?.response?.data?.message ||
