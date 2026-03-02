@@ -199,13 +199,13 @@ export default function DeliveryCard({
               <div className="fp-muted">Delivered at: {fmt(pod.delivered_at)}</div>
 
               {pod.photo_url ? (
-                <img src={`${API_BASE}${pod.photo_url}`} alt="POD Photo" className="fp-img" />
+                <img src={pod.photo_url} alt="POD Photo" className="fp-img" />
               ) : pod.photo_filename ? (
                 <img src={`${API_BASE}/uploads/${pod.photo_filename}`} alt="POD Photo" className="fp-img" />
               ) : null}
 
               {pod.signature_url ? (
-                <img src={`${API_BASE}${pod.signature_url}`} alt="POD Signature" className="fp-img" />
+                <img src={pod.signature_url} alt="POD Signature" className="fp-img" />
               ) : pod.signature_filename ? (
                 <img src={`${API_BASE}/uploads/${pod.signature_filename}`} alt="POD Signature" className="fp-img" />
               ) : null}

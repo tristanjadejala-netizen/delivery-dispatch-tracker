@@ -2,8 +2,9 @@
 import { Router } from "express";
 import { db } from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
-import { upload } from "../upload.js";
+import { upload, uploadMemory } from "../upload.js";
 import { createNotification } from "../utils/notify.js";
+import { uploadToSupabase } from "../utils/supabaseStorage.js";
 
 const router = Router();
 
@@ -17,10 +18,10 @@ async function getDriverIdFromUser(userId) {
 }
 
 async function ensureAssigned(deliveryId, driverId) {
-  const r = await db.query("SELECT * FROM deliveries WHERE id=$1 AND assigned_driver_id=$2", [
-    deliveryId,
-    driverId,
-  ]);
+  const r = await db.query(
+    "SELECT * FROM deliveries WHERE id=$1 AND assigned_driver_id=$2",
+    [deliveryId, driverId],
+  );
   return r.rows[0] || null;
 }
 
@@ -38,10 +39,12 @@ async function getUserName(userId) {
 // DRIVER: list assigned deliveries
 router.get("/deliveries", requireAuth, async (req, res) => {
   try {
-    if (req.user.role !== "DRIVER") return res.status(403).json({ message: "Forbidden" });
+    if (req.user.role !== "DRIVER")
+      return res.status(403).json({ message: "Forbidden" });
 
     const driverId = await getDriverIdFromUser(req.user.id);
-    if (!driverId) return res.status(404).json({ message: "Driver record not found" });
+    if (!driverId)
+      return res.status(404).json({ message: "Driver record not found" });
 
     const result = await db.query(
       `SELECT *
@@ -60,16 +63,22 @@ router.get("/deliveries", requireAuth, async (req, res) => {
 // DRIVER: get timeline events for an assigned delivery
 router.get("/deliveries/:id/events", requireAuth, async (req, res) => {
   try {
-    if (req.user.role !== "DRIVER") return res.status(403).json({ message: "Forbidden" });
+    if (req.user.role !== "DRIVER")
+      return res.status(403).json({ message: "Forbidden" });
 
     const deliveryId = Number(req.params.id);
-    if (!deliveryId) return res.status(400).json({ message: "Invalid delivery id" });
+    if (!deliveryId)
+      return res.status(400).json({ message: "Invalid delivery id" });
 
     const driverId = await getDriverIdFromUser(req.user.id);
-    if (!driverId) return res.status(404).json({ message: "Driver record not found" });
+    if (!driverId)
+      return res.status(404).json({ message: "Driver record not found" });
 
     const owned = await ensureAssigned(deliveryId, driverId);
-    if (!owned) return res.status(404).json({ message: "Delivery not found or not assigned to you" });
+    if (!owned)
+      return res
+        .status(404)
+        .json({ message: "Delivery not found or not assigned to you" });
 
     const r = await db.query(
       `SELECT id, delivery_id, status, note, created_at
@@ -88,19 +97,28 @@ router.get("/deliveries/:id/events", requireAuth, async (req, res) => {
 // DRIVER: get POD for an assigned delivery
 router.get("/deliveries/:id/pod", requireAuth, async (req, res) => {
   try {
-    if (req.user.role !== "DRIVER") return res.status(403).json({ message: "Forbidden" });
+    if (req.user.role !== "DRIVER")
+      return res.status(403).json({ message: "Forbidden" });
 
     const deliveryId = Number(req.params.id);
-    if (!deliveryId) return res.status(400).json({ message: "Invalid delivery id" });
+    if (!deliveryId)
+      return res.status(400).json({ message: "Invalid delivery id" });
 
     const driverId = await getDriverIdFromUser(req.user.id);
-    if (!driverId) return res.status(404).json({ message: "Driver record not found" });
+    if (!driverId)
+      return res.status(404).json({ message: "Driver record not found" });
 
     const owned = await ensureAssigned(deliveryId, driverId);
-    if (!owned) return res.status(404).json({ message: "Delivery not found or not assigned to you" });
+    if (!owned)
+      return res
+        .status(404)
+        .json({ message: "Delivery not found or not assigned to you" });
 
-    const r = await db.query(`SELECT * FROM pod WHERE delivery_id=$1`, [deliveryId]);
-    if (!r.rows.length) return res.status(404).json({ message: "POD not found" });
+    const r = await db.query(`SELECT * FROM pod WHERE delivery_id=$1`, [
+      deliveryId,
+    ]);
+    if (!r.rows.length)
+      return res.status(404).json({ message: "POD not found" });
 
     return res.json(r.rows[0]);
   } catch (e) {
@@ -111,19 +129,29 @@ router.get("/deliveries/:id/pod", requireAuth, async (req, res) => {
 // DRIVER: get failure record for an assigned delivery
 router.get("/deliveries/:id/failure", requireAuth, async (req, res) => {
   try {
-    if (req.user.role !== "DRIVER") return res.status(403).json({ message: "Forbidden" });
+    if (req.user.role !== "DRIVER")
+      return res.status(403).json({ message: "Forbidden" });
 
     const deliveryId = Number(req.params.id);
-    if (!deliveryId) return res.status(400).json({ message: "Invalid delivery id" });
+    if (!deliveryId)
+      return res.status(400).json({ message: "Invalid delivery id" });
 
     const driverId = await getDriverIdFromUser(req.user.id);
-    if (!driverId) return res.status(404).json({ message: "Driver record not found" });
+    if (!driverId)
+      return res.status(404).json({ message: "Driver record not found" });
 
     const owned = await ensureAssigned(deliveryId, driverId);
-    if (!owned) return res.status(404).json({ message: "Delivery not found or not assigned to you" });
+    if (!owned)
+      return res
+        .status(404)
+        .json({ message: "Delivery not found or not assigned to you" });
 
-    const r = await db.query(`SELECT * FROM delivery_failures WHERE delivery_id=$1`, [deliveryId]);
-    if (!r.rows.length) return res.status(404).json({ message: "Failure record not found" });
+    const r = await db.query(
+      `SELECT * FROM delivery_failures WHERE delivery_id=$1`,
+      [deliveryId],
+    );
+    if (!r.rows.length)
+      return res.status(404).json({ message: "Failure record not found" });
 
     return res.json(r.rows[0]);
   } catch (e) {
@@ -165,7 +193,9 @@ router.post("/deliveries/:id/status", requireAuth, async (req, res) => {
 
     const delivery = await ensureAssigned(deliveryId, driverId);
     if (!delivery) {
-      return res.status(404).json({ message: "Delivery not found or not assigned to you" });
+      return res
+        .status(404)
+        .json({ message: "Delivery not found or not assigned to you" });
     }
 
     const current = delivery.status;
@@ -183,11 +213,16 @@ router.post("/deliveries/:id/status", requireAuth, async (req, res) => {
     };
 
     if (!allowedNextStored[current]?.includes(nextStoredStatus)) {
-      return res.status(400).json({ message: `Invalid transition: ${current} -> ${nextStoredStatus}` });
+      return res.status(400).json({
+        message: `Invalid transition: ${current} -> ${nextStoredStatus}`,
+      });
     }
 
     if (current !== nextStoredStatus) {
-      await db.query(`UPDATE deliveries SET status=$1 WHERE id=$2`, [nextStoredStatus, deliveryId]);
+      await db.query(`UPDATE deliveries SET status=$1 WHERE id=$2`, [
+        nextStoredStatus,
+        deliveryId,
+      ]);
     }
 
     // 1️⃣ Always log the actual driver action
@@ -232,7 +267,9 @@ router.post("/deliveries/:id/status", requireAuth, async (req, res) => {
       }
     }
 
-    const updated = await db.query(`SELECT * FROM deliveries WHERE id=$1`, [deliveryId]);
+    const updated = await db.query(`SELECT * FROM deliveries WHERE id=$1`, [
+      deliveryId,
+    ]);
     return res.json(updated.rows[0]);
   } catch (e) {
     return res.status(500).json({ message: "Server error", error: e.message });
@@ -242,10 +279,12 @@ router.post("/deliveries/:id/status", requireAuth, async (req, res) => {
 // DRIVER: Emergency update (non-blocking status note + customer notification)
 router.post("/deliveries/:id/emergency", requireAuth, async (req, res) => {
   try {
-    if (req.user.role !== "DRIVER") return res.status(403).json({ message: "Forbidden" });
+    if (req.user.role !== "DRIVER")
+      return res.status(403).json({ message: "Forbidden" });
 
     const deliveryId = Number(req.params.id);
-    if (!deliveryId) return res.status(400).json({ message: "Invalid delivery id" });
+    if (!deliveryId)
+      return res.status(400).json({ message: "Invalid delivery id" });
 
     const { type, message, driverLocation, timestamp } = req.body || {};
 
@@ -259,16 +298,21 @@ router.post("/deliveries/:id/emergency", requireAuth, async (req, res) => {
       "OTHER",
     ];
 
-    if (!type || !ALLOWED.includes(type)) return res.status(400).json({ message: "Invalid emergency type" });
+    if (!type || !ALLOWED.includes(type))
+      return res.status(400).json({ message: "Invalid emergency type" });
     if (type === "OTHER" && (!message || String(message).trim().length === 0)) {
       return res.status(400).json({ message: "message is required for OTHER" });
     }
 
     const driverId = await getDriverIdFromUser(req.user.id);
-    if (!driverId) return res.status(404).json({ message: "Driver record not found" });
+    if (!driverId)
+      return res.status(404).json({ message: "Driver record not found" });
 
     const delivery = await ensureAssigned(deliveryId, driverId);
-    if (!delivery) return res.status(404).json({ message: "Delivery not found or not assigned to you" });
+    if (!delivery)
+      return res
+        .status(404)
+        .json({ message: "Delivery not found or not assigned to you" });
 
     const typeLabel = {
       TIRE_FLAT: "Tire got flat",
@@ -304,49 +348,73 @@ router.post("/deliveries/:id/emergency", requireAuth, async (req, res) => {
       console.warn("createNotification EMERGENCY failed:", e?.message || e);
     }
 
-    return res.json({ ok: true, delivery_id: deliveryId, type, message: message || null, driverLocation: driverLocation || null, timestamp: timestamp || null });
+    return res.json({
+      ok: true,
+      delivery_id: deliveryId,
+      type,
+      message: message || null,
+      driverLocation: driverLocation || null,
+      timestamp: timestamp || null,
+    });
   } catch (e) {
     return res.status(500).json({ message: "Server error", error: e.message });
   }
 });
 
 // DRIVER: mark delivery as FAILED (with reason + optional photo)
-router.post("/deliveries/:id/fail", requireAuth, upload.single("photo"), async (req, res) => {
-  try {
-    if (req.user.role !== "DRIVER") return res.status(403).json({ message: "Forbidden" });
+router.post(
+  "/deliveries/:id/fail",
+  requireAuth,
+  upload.single("photo"),
+  async (req, res) => {
+    try {
+      if (req.user.role !== "DRIVER")
+        return res.status(403).json({ message: "Forbidden" });
 
-    const deliveryId = Number(req.params.id);
-    const { reason, notes } = req.body;
+      const deliveryId = Number(req.params.id);
+      const { reason, notes } = req.body;
 
-    const ALLOWED_REASONS = [
-      "CUSTOMER_UNAVAILABLE",
-      "WRONG_ADDRESS",
-      "PACKAGE_DAMAGED",
-      "REFUSED_BY_CUSTOMER",
-      "NO_CONTACT",
-      "RETURNED_TO_SENDER",
-      "OTHER",
-    ];
+      const ALLOWED_REASONS = [
+        "CUSTOMER_UNAVAILABLE",
+        "WRONG_ADDRESS",
+        "PACKAGE_DAMAGED",
+        "REFUSED_BY_CUSTOMER",
+        "NO_CONTACT",
+        "RETURNED_TO_SENDER",
+        "OTHER",
+      ];
 
-    if (!deliveryId) return res.status(400).json({ message: "Invalid delivery id" });
-    if (!reason || !ALLOWED_REASONS.includes(reason)) {
-      return res.status(400).json({ message: "Invalid reason" });
-    }
+      if (!deliveryId)
+        return res.status(400).json({ message: "Invalid delivery id" });
+      if (!reason || !ALLOWED_REASONS.includes(reason)) {
+        return res.status(400).json({ message: "Invalid reason" });
+      }
 
-    const driverId = await getDriverIdFromUser(req.user.id);
-    if (!driverId) return res.status(404).json({ message: "Driver record not found" });
+      const driverId = await getDriverIdFromUser(req.user.id);
+      if (!driverId)
+        return res.status(404).json({ message: "Driver record not found" });
 
-    const delivery = await ensureAssigned(deliveryId, driverId);
-    if (!delivery) return res.status(404).json({ message: "Delivery not found or not assigned to you" });
+      const delivery = await ensureAssigned(deliveryId, driverId);
+      if (!delivery)
+        return res
+          .status(404)
+          .json({ message: "Delivery not found or not assigned to you" });
 
-    if (delivery.status === "DELIVERED") return res.status(400).json({ message: "Cannot fail a delivered delivery" });
-    if (delivery.status === "FAILED") return res.status(400).json({ message: "Delivery is already FAILED" });
-    if (delivery.status === "CANCELLED") return res.status(400).json({ message: "Cannot fail a cancelled delivery" });
+      if (delivery.status === "DELIVERED")
+        return res
+          .status(400)
+          .json({ message: "Cannot fail a delivered delivery" });
+      if (delivery.status === "FAILED")
+        return res.status(400).json({ message: "Delivery is already FAILED" });
+      if (delivery.status === "CANCELLED")
+        return res
+          .status(400)
+          .json({ message: "Cannot fail a cancelled delivery" });
 
-    const photo_url = req.file ? `/uploads/${req.file.filename}` : null;
+      const photo_url = req.file ? `/uploads/${req.file.filename}` : null;
 
-    const failure = await db.query(
-      `INSERT INTO delivery_failures (delivery_id, reason, notes, photo_url, failed_at)
+      const failure = await db.query(
+        `INSERT INTO delivery_failures (delivery_id, reason, notes, photo_url, failed_at)
        VALUES ($1,$2,$3,$4,NOW())
        ON CONFLICT (delivery_id)
        DO UPDATE SET
@@ -355,77 +423,119 @@ router.post("/deliveries/:id/fail", requireAuth, upload.single("photo"), async (
          photo_url=COALESCE(EXCLUDED.photo_url, delivery_failures.photo_url),
          failed_at=NOW()
        RETURNING *`,
-      [deliveryId, reason, notes || null, photo_url],
-    );
+        [deliveryId, reason, notes || null, photo_url],
+      );
 
-    const updated = await db.query(`UPDATE deliveries SET status='FAILED' WHERE id=$1 RETURNING *`, [deliveryId]);
+      const updated = await db.query(
+        `UPDATE deliveries SET status='FAILED' WHERE id=$1 RETURNING *`,
+        [deliveryId],
+      );
 
-    await db.query(
-      `INSERT INTO delivery_events (delivery_id, status, note, created_by)
+      await db.query(
+        `INSERT INTO delivery_events (delivery_id, status, note, created_by)
        VALUES ($1,'FAILED',$2,$3)`,
-      [deliveryId, `Failed: ${reason}${notes ? ` - ${notes}` : ""}`, req.user.id],
-    );
+        [
+          deliveryId,
+          `Failed: ${reason}${notes ? ` - ${notes}` : ""}`,
+          req.user.id,
+        ],
+      );
 
-    // ✅ Notifications hook (failed)
-    try {
-      const driverName = await getUserName(req.user.id);
-      await createNotification({
-        type: "ORDERS",
-        subtype: "FAILED",
-        entity_id: deliveryId,
-        reference_no: updated.rows[0].reference_no,
-        title: "Failed Delivery:",
-        message: `${updated.rows[0].reference_no} could not be completed by Driver ${driverName}. Review Requested.`,
-        created_by: req.user.id,
-      });
+      // ✅ Notifications hook (failed)
+      try {
+        const driverName = await getUserName(req.user.id);
+        await createNotification({
+          type: "ORDERS",
+          subtype: "FAILED",
+          entity_id: deliveryId,
+          reference_no: updated.rows[0].reference_no,
+          title: "Failed Delivery:",
+          message: `${updated.rows[0].reference_no} could not be completed by Driver ${driverName}. Review Requested.`,
+          created_by: req.user.id,
+        });
+      } catch (e) {
+        console.warn("createNotification FAILED failed:", e?.message || e);
+      }
+
+      return res.json({ delivery: updated.rows[0], failure: failure.rows[0] });
     } catch (e) {
-      console.warn("createNotification FAILED failed:", e?.message || e);
+      return res
+        .status(500)
+        .json({ message: "Server error", error: e.message });
     }
-
-    return res.json({ delivery: updated.rows[0], failure: failure.rows[0] });
-  } catch (e) {
-    return res.status(500).json({ message: "Server error", error: e.message });
-  }
-});
+  },
+);
 
 // DRIVER: submit Proof of Delivery (POD)
 router.post(
   "/deliveries/:id/pod",
   requireAuth,
-  upload.fields([
+  uploadMemory.fields([
     { name: "photo", maxCount: 1 },
     { name: "signature", maxCount: 1 },
   ]),
   async (req, res) => {
     try {
-      if (req.user.role !== "DRIVER") return res.status(403).json({ message: "Forbidden" });
+      if (req.user.role !== "DRIVER")
+        return res.status(403).json({ message: "Forbidden" });
 
       const deliveryId = Number(req.params.id);
       const { recipient_name, note } = req.body;
 
-      if (!deliveryId) return res.status(400).json({ message: "Invalid delivery id" });
+      if (!deliveryId)
+        return res.status(400).json({ message: "Invalid delivery id" });
       if (!recipient_name || String(recipient_name).trim().length === 0) {
         return res.status(400).json({ message: "recipient_name is required" });
       }
 
       const driverId = await getDriverIdFromUser(req.user.id);
-      if (!driverId) return res.status(404).json({ message: "Driver record not found" });
+      if (!driverId)
+        return res.status(404).json({ message: "Driver record not found" });
 
       const delivery = await ensureAssigned(deliveryId, driverId);
-      if (!delivery) return res.status(404).json({ message: "Delivery not found or not assigned to you" });
+      if (!delivery)
+        return res
+          .status(404)
+          .json({ message: "Delivery not found or not assigned to you" });
 
-      if (delivery.status === "DELIVERED") return res.status(400).json({ message: "Delivery is already DELIVERED" });
-      if (delivery.status === "FAILED") return res.status(400).json({ message: "Cannot submit POD for FAILED delivery" });
-      if (delivery.status === "CANCELLED") return res.status(400).json({ message: "Cannot submit POD for CANCELLED delivery" });
-      if (delivery.status !== "IN_TRANSIT") return res.status(400).json({ message: "POD allowed only when status is IN_TRANSIT" });
+      if (delivery.status === "DELIVERED")
+        return res
+          .status(400)
+          .json({ message: "Delivery is already DELIVERED" });
+      if (delivery.status === "FAILED")
+        return res
+          .status(400)
+          .json({ message: "Cannot submit POD for FAILED delivery" });
+      if (delivery.status === "CANCELLED")
+        return res
+          .status(400)
+          .json({ message: "Cannot submit POD for CANCELLED delivery" });
+      if (delivery.status !== "IN_TRANSIT")
+        return res
+          .status(400)
+          .json({ message: "POD allowed only when status is IN_TRANSIT" });
 
       const photoFile = req.files?.photo?.[0];
       const sigFile = req.files?.signature?.[0];
 
-      if (!photoFile) return res.status(400).json({ message: "photo is required" });
+      if (!photoFile)
+        return res.status(400).json({ message: "photo is required" });
 
-      const photo_url = `/uploads/${photoFile.filename}`;
-      const signature_url = sigFile ? `/uploads/${sigFile.filename}` : null;
+      const basePath = `pod/delivery_${deliveryId}/${Date.now()}`;
+
+      const photo_url = await uploadToSupabase({
+        path: `${basePath}_photo.jpg`,
+        buffer: photoFile.buffer,
+        contentType: photoFile.mimetype || "image/jpeg",
+      });
+
+      const signature_url = sigFile
+        ? await uploadToSupabase({
+            path: `${basePath}_signature.png`,
+            buffer: sigFile.buffer,
+            contentType: sigFile.mimetype || "image/png",
+          })
+        : null;
 
       const pod = await db.query(
         `INSERT INTO pod (delivery_id, recipient_name, photo_url, signature_url, note, created_by)
@@ -439,10 +549,20 @@ router.post(
            created_by=EXCLUDED.created_by,
            delivered_at=NOW()
          RETURNING *`,
-        [deliveryId, recipient_name.trim(), photo_url, signature_url, note || null, req.user.id],
+        [
+          deliveryId,
+          recipient_name.trim(),
+          photo_url,
+          signature_url,
+          note || null,
+          req.user.id,
+        ],
       );
 
-      const updated = await db.query(`UPDATE deliveries SET status='DELIVERED' WHERE id=$1 RETURNING *`, [deliveryId]);
+      const updated = await db.query(
+        `UPDATE deliveries SET status='DELIVERED' WHERE id=$1 RETURNING *`,
+        [deliveryId],
+      );
 
       await db.query(
         `INSERT INTO delivery_events (delivery_id, status, note, created_by)
@@ -468,7 +588,9 @@ router.post(
 
       return res.json({ delivery: updated.rows[0], pod: pod.rows[0] });
     } catch (e) {
-      return res.status(500).json({ message: "Server error", error: e.message });
+      return res
+        .status(500)
+        .json({ message: "Server error", error: e.message });
     }
   },
 );
@@ -482,7 +604,8 @@ router.post(
 // DRIVER: update last known location
 router.post("/location", requireAuth, async (req, res) => {
   try {
-    if (req.user.role !== "DRIVER") return res.status(403).json({ message: "Forbidden" });
+    if (req.user.role !== "DRIVER")
+      return res.status(403).json({ message: "Forbidden" });
 
     const { lat, lng, accuracy, heading, speed } = req.body;
 
@@ -491,7 +614,8 @@ router.post("/location", requireAuth, async (req, res) => {
     }
 
     const driverId = await getDriverIdFromUser(req.user.id);
-    if (!driverId) return res.status(404).json({ message: "Driver record not found" });
+    if (!driverId)
+      return res.status(404).json({ message: "Driver record not found" });
 
     const r = await db.query(
       `INSERT INTO driver_locations (driver_id, lat, lng, accuracy, heading, speed, updated_at)
@@ -517,12 +641,17 @@ router.post("/location", requireAuth, async (req, res) => {
 // DRIVER: get own last known location
 router.get("/location", requireAuth, async (req, res) => {
   try {
-    if (req.user.role !== "DRIVER") return res.status(403).json({ message: "Forbidden" });
+    if (req.user.role !== "DRIVER")
+      return res.status(403).json({ message: "Forbidden" });
 
     const driverId = await getDriverIdFromUser(req.user.id);
-    if (!driverId) return res.status(404).json({ message: "Driver record not found" });
+    if (!driverId)
+      return res.status(404).json({ message: "Driver record not found" });
 
-    const r = await db.query(`SELECT * FROM driver_locations WHERE driver_id=$1`, [driverId]);
+    const r = await db.query(
+      `SELECT * FROM driver_locations WHERE driver_id=$1`,
+      [driverId],
+    );
     return res.json(r.rows[0] || null);
   } catch (e) {
     return res.status(500).json({ message: "Server error", error: e.message });
