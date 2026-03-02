@@ -12,7 +12,12 @@ import notificationsRoutes from "./routes/notifications.js";
 import path from "path";
 import { fileURLToPath } from "url";
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 const app = express();
+
+app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 
 const allowedOriginPatterns = [
   /^http:\/\/localhost:5173$/,
@@ -42,7 +47,6 @@ const corsOptions = {
   optionsSuccessStatus: 204,
 };
 
-app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
 app.use(cors(corsOptions));
 app.options(/.*/, cors(corsOptions)); // IMPORTANT: preflight (no "*" string)
@@ -50,8 +54,7 @@ app.options(/.*/, cors(corsOptions)); // IMPORTANT: preflight (no "*" string)
 app.use(express.json());
 
 // Static uploads
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+
 app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 
 // Health check
