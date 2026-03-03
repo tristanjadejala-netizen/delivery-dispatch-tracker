@@ -320,7 +320,8 @@ router.post("/deliveries/:id/emergency", requireAuth, async (req, res) => {
 
 // DRIVER: mark delivery as FAILED (with reason + optional photo)
 // (Still uses disk upload. Optional: you can migrate this to Supabase later too.)
-router.post("/deliveries/:id/fail", requireAuth, upload.single("photo"), async (req, res) => {
+// DRIVER: mark delivery as FAILED (with reason + optional photo) — Supabase Storage (production-safe)
+router.post("/deliveries/:id/fail", requireAuth, uploadMemory.single("photo"), async (req, res) => {
   try {
     if (req.user.role !== "DRIVER") return res.status(403).json({ message: "Forbidden" });
 
@@ -352,7 +353,25 @@ router.post("/deliveries/:id/fail", requireAuth, upload.single("photo"), async (
     if (delivery.status === "FAILED") return res.status(400).json({ message: "Delivery is already FAILED" });
     if (delivery.status === "CANCELLED") return res.status(400).json({ message: "Cannot fail a cancelled delivery" });
 
-    const photo_url = req.file ? `/uploads/${req.file.filename}` : null;
+    // Optional photo (now stored in Supabase instead of /uploads)
+    const file = req.file || null;
+
+    let photo_url = null;
+    if (file) {
+      const basePath = `failure_delivery_${deliveryId}/${Date.now()}`;
+
+      // keep original mimetype if possible; default to jpeg
+      const contentType = file.mimetype || "image/jpeg";
+
+      // choose extension based on mimetype (simple)
+      const ext = contentType.includes("png") ? "png" : "jpg";
+
+      photo_url = await uploadToSupabase({
+        path: `pod/${basePath}_fail.${ext}`,
+        buffer: file.buffer,
+        contentType,
+      });
+    }
 
     const failure = await db.query(
       `INSERT INTO delivery_failures (delivery_id, reason, notes, photo_url, failed_at)
