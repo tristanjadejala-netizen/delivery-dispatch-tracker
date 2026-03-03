@@ -319,7 +319,7 @@ router.post("/deliveries/:id/emergency", requireAuth, async (req, res) => {
 });
 
 // DRIVER: mark delivery as FAILED (with reason + optional photo)
-// (Kept as-is using disk upload; you can migrate this to Supabase later too.)
+// (Still uses disk upload. Optional: you can migrate this to Supabase later too.)
 router.post("/deliveries/:id/fail", requireAuth, upload.single("photo"), async (req, res) => {
   try {
     if (req.user.role !== "DRIVER") return res.status(403).json({ message: "Forbidden" });
@@ -433,7 +433,6 @@ router.post(
 
       if (!photoFile) return res.status(400).json({ message: "photo is required" });
 
-      // Upload to Supabase Storage (public bucket)
       const basePath = `delivery_${deliveryId}/${Date.now()}`;
 
       const photo_url = await uploadToSupabase({
@@ -498,7 +497,7 @@ router.post(
 
 /**
  * =========================
- * DRIVER: Location Tracking (Step 4)
+ * DRIVER: Location Tracking
  * =========================
  */
 

@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 
 const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY; // use your Supabase "Secret key" (sb_secret_...)
 const bucket = process.env.SUPABASE_POD_BUCKET || "pod";
 
 export const supabase = createClient(supabaseUrl, supabaseKey);

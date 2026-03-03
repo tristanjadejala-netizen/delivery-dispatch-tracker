@@ -5,6 +5,31 @@ import DeliveryMapInline from "./DeliveryMapInline";
 
 import "../../styles/dispatcher-delivery-card.css";
 
+function isAbsoluteUrl(url) {
+  if (!url) return false;
+  return /^https?:\/\//i.test(String(url));
+}
+
+function normalizeApiBase(API_BASE) {
+  return String(API_BASE || "").replace(/\/+$/, "");
+}
+
+function buildLegacyUploadUrl(API_BASE, pathOrFilename) {
+  const base = normalizeApiBase(API_BASE);
+  if (!pathOrFilename) return null;
+
+  const v = String(pathOrFilename);
+
+  // Already absolute (Supabase public URL, S3, etc.)
+  if (isAbsoluteUrl(v)) return v;
+
+  // If DB stored "/uploads/xxx.jpg"
+  if (v.startsWith("/")) return `${base}${v}`;
+
+  // If DB stored just "xxx.jpg"
+  return `${base}/uploads/${v}`;
+}
+
 export default function DeliveryCard({
   delivery: d,
   drivers,
@@ -43,6 +68,29 @@ export default function DeliveryCard({
   const disableDelete = deleteLocked || deletingId === d.id;
 
   const [openMap, setOpenMap] = useState(false);
+
+  // POD image URLs (Supabase URL preferred, legacy fallback supported)
+  const podPhotoSrc =
+    pod?.photo_url
+      ? buildLegacyUploadUrl(API_BASE, pod.photo_url)
+      : pod?.photo_filename
+      ? buildLegacyUploadUrl(API_BASE, pod.photo_filename)
+      : null;
+
+  const podSignatureSrc =
+    pod?.signature_url
+      ? buildLegacyUploadUrl(API_BASE, pod.signature_url)
+      : pod?.signature_filename
+      ? buildLegacyUploadUrl(API_BASE, pod.signature_filename)
+      : null;
+
+  // Failure photo URL (support future Supabase URLs too, plus legacy)
+  const failurePhotoSrc =
+    failure?.photo_url
+      ? buildLegacyUploadUrl(API_BASE, failure.photo_url)
+      : failure?.photo_filename
+      ? buildLegacyUploadUrl(API_BASE, failure.photo_filename)
+      : null;
 
   return (
     <div className={`fp-card fpOvD-card ${selected ? "fp-cardSelected fpOvD-selected" : ""}`}>
@@ -198,17 +246,9 @@ export default function DeliveryCard({
               </div>
               <div className="fp-muted">Delivered at: {fmt(pod.delivered_at)}</div>
 
-              {pod.photo_url ? (
-                <img src={pod.photo_url} alt="POD Photo" className="fp-img" />
-              ) : pod.photo_filename ? (
-                <img src={`${API_BASE}/uploads/${pod.photo_filename}`} alt="POD Photo" className="fp-img" />
-              ) : null}
+              {podPhotoSrc ? <img src={podPhotoSrc} alt="POD Photo" className="fp-img" /> : null}
 
-              {pod.signature_url ? (
-                <img src={pod.signature_url} alt="POD Signature" className="fp-img" />
-              ) : pod.signature_filename ? (
-                <img src={`${API_BASE}/uploads/${pod.signature_filename}`} alt="POD Signature" className="fp-img" />
-              ) : null}
+              {podSignatureSrc ? <img src={podSignatureSrc} alt="POD Signature" className="fp-img" /> : null}
             </div>
           )}
         </div>
@@ -230,11 +270,7 @@ export default function DeliveryCard({
               <div className="fp-muted">Failed at: {fmt(failure.failed_at)}</div>
               {failure.notes ? <div className="fp-kv">Notes: {failure.notes}</div> : null}
 
-              {failure.photo_url ? (
-                <img src={`${API_BASE}${failure.photo_url}`} alt="Failure Photo" className="fp-img" />
-              ) : failure.photo_filename ? (
-                <img src={`${API_BASE}/uploads/${failure.photo_filename}`} alt="Failure Photo" className="fp-img" />
-              ) : null}
+              {failurePhotoSrc ? <img src={failurePhotoSrc} alt="Failure Photo" className="fp-img" /> : null}
             </div>
           )}
         </div>
